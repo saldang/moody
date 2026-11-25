@@ -36,7 +36,8 @@ Conoscenza di base di WebSocket e TLS. Implementazioni di riferimento:
 ## 3. Formato audio
 
 PCM **signed 16‑bit little endian, mono, 16 kHz**, in entrambe le direzioni. Il gateway converte
-l'uscita di Piper (di solito 22,05 kHz) a 16 kHz e la invia in blocchi da 4 KiB.
+l'uscita del TTS (WAV a 44,1 kHz da Supertonic 3 in QVAC, di solito 22,05 kHz da Piper) a 16 kHz e la
+invia in blocchi da 4 KiB.
 
 ## 4. Messaggi dispositivo → gateway
 
@@ -99,7 +100,9 @@ rifiuta comunque i downgrade e, in release, le immagini non firmate.
 | gateway → brain | `POST /v1/turn` `{subject, session_id, text}` → `{reply, end_session, category}` | mTLS `service-ca` (+ Bearer OIDC in enterprise) |
 | gateway → brain | `GET /v1/notifications?subject=` → `{items: [...]}` | come sopra |
 | brain → wellbeing | MCP Streamable HTTP su `https://wellbeing:8090/mcp` | mTLS `service-ca`, protezione DNS‑rebinding |
-| gateway → whisper/piper | protocollo Wyoming su TCP | rete docker `core` interna |
+| gateway → qvac (default) | `POST /v1/audio/transcriptions` (WAV 16 kHz, multipart) e `POST /v1/audio/speech` (`response_format: wav`) | chiave Bearer (`qvac_api_key`), rete docker `core` interna |
+| brain → qvac (default) | `POST /v1/chat/completions` (con tool) e `POST /v1/embeddings` | chiave Bearer, rete docker `ai` interna |
+| gateway → whisper/piper (varianti) | protocollo Wyoming su TCP | rete docker `core` interna |
 
 `category` può valere `chat`, `tool`, `confirm`, `self_harm`, `medical_emergency`,
 `prompt_injection`, `too_long`, `guard:<rischio>`, `error`.

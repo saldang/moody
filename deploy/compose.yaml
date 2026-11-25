@@ -50,7 +50,7 @@ services:
       MOODY_BRAIN_URL: https://brain:8080
       MOODY_STT_BACKEND: ${MOODY_STT_BACKEND:-openai}
       MOODY_TTS_BACKEND: ${MOODY_TTS_BACKEND:-openai}
-      MOODY_SPEECH_URL: http://qvac:11435/v1
+      MOODY_SPEECH_URL: ${MOODY_SPEECH_URL:-http://qvac:11435/v1}
       MOODY_SPEECH_API_KEY_FILE: /run/secrets/qvac_api_key
       MOODY_STT_MODEL: moody-stt
       MOODY_TTS_MODEL: moody-tts

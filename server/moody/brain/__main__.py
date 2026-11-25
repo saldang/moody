@@ -52,14 +52,22 @@ def build_agent() -> Agent:
         data_dir.mkdir(parents=True, exist_ok=True)
         embed_url = env("MOODY_EMBED_URL", llm_url)
         if env("MOODY_EMBED_BACKEND", backend) == "openai":
-            embedder = OpenAICompatEmbedder(embed_url, embed_model, read_secret("MOODY_LLM_API_KEY", ""))
+            embed_key = read_secret("MOODY_EMBED_API_KEY", "") or read_secret("MOODY_LLM_API_KEY", "")
+            embedder = OpenAICompatEmbedder(embed_url, embed_model, embed_key)
         else:
             embedder = OllamaEmbedder(embed_url, embed_model)
         kb = KnowledgeBase(data_dir / "knowledge.sqlite3", embedder,
                            min_score=float(env("MOODY_RAG_MIN_SCORE", "0.55")))
 
+    # Granite Guardian speaks the Ollama API: with an OpenAI-compatible runtime (QVAC, vLLM) it needs
+    # its own Ollama endpoint in MOODY_GUARD_URL, otherwise it is disabled (rule-based guardrails stay on).
     guard_model = env("MOODY_GUARD_MODEL")
-    guard = GuardModel(env("MOODY_GUARD_URL", llm_url), guard_model) if guard_model else None
+    guard_url = env("MOODY_GUARD_URL", llm_url if backend == "ollama" else "")
+    guard = None
+    if guard_model and guard_url:
+        guard = GuardModel(guard_url, guard_model)
+    elif guard_model:
+        log.warning("MOODY_GUARD_MODEL set but no Ollama endpoint in MOODY_GUARD_URL: guard model disabled")
 
     settings = AgentSettings(
         locale=env("MOODY_LOCALE", "it"),
