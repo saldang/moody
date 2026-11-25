@@ -1,0 +1,43 @@
+# Tool policy - DENY BY DEFAULT. A tool not listed here is invisible to the LLM.
+#   allow   : the assistant may call it directly
+#   confirm : the assistant must ask "Vuoi che proceda...?" and get a spoken "si"
+# Names are "<mcp-server>.<tool>". Wildcards (*) are allowed in keys and patterns.
+
+tools:
+  wellbeing.mood_checkin: allow
+  wellbeing.mood_summary: allow
+  wellbeing.set_reminder: allow
+  wellbeing.list_reminders: allow
+  wellbeing.cancel_reminder: allow
+  wellbeing.breathing_exercise: allow
+  wellbeing.request_help: allow
+  wellbeing.erase_my_data: confirm
+
+  # Home Assistant MCP server (only if MOODY_HA_MCP_URL is set).
+  # Expose to Assist in Home Assistant ONLY the entities you want Moody to control.
+  homeassistant.GetLiveContext: allow
+  homeassistant.HassTurnOn: allow
+  homeassistant.HassTurnOff: allow
+  homeassistant.HassLightSet: allow
+  homeassistant.HassMediaPause: allow
+  homeassistant.HassMediaUnpause: allow
+  homeassistant.HassClimateSetTemperature: confirm
+
+# Called by the system itself (e.g. reminder delivery), never offered to the LLM.
+internal_only:
+  - wellbeing.due_reminders
+
+# Hard deny, wins over everything above (matched case-insensitively on the full name).
+deny_patterns:
+  - "*lock*"
+  - "*unlock*"
+  - "*alarm*"
+  - "*camera*"
+  - "*garage*"
+  - "*door*"
+  - "*valve*"
+  - "*oven*"
+  - "*shell*"
+  - "*exec*"
+
+rate_limit_per_minute: 10

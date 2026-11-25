@@ -1,0 +1,8 @@
+## Pinned component versions. Licenses: esp-box-3 / esp_websocket_client Apache-2.0,
+## LVGL MIT, esp-sr "ESPRESSIF MIT" (use permitted on Espressif chips only) - see docs/10-licenze.md
+dependencies:
+  idf: ">=5.4"
+  espressif/esp-box-3: "~3.2.1"
+  espressif/esp-sr: "~2.6.2"
+  espressif/esp_websocket_client: "~1.8.0"
+  lvgl/lvgl: "~9.4.0"

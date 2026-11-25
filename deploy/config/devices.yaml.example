@@ -1,0 +1,17 @@
+# Device registry, hot-reloaded by the gateway (no restart needed).
+#
+# key      = certificate CN of the device (printed by firmware/tools/provision.py)
+# subject  = PSEUDONYM used by the whole system. NEVER put names, rooms or other
+#            personal data here: the mapping pseudonym -> person lives outside
+#            Moody (at home: in your head; in a care home: in the care system).
+# quiet_hours = no proactive reminders in this window (local time)
+
+devices:
+  moody-a1b2c3:
+    subject: res-001
+    enabled: true
+    quiet_hours: "22:00-07:30"
+
+# Certificate serial numbers (hex) that must be refused, even if the device is listed.
+# Use: python -m moody.pki revoke <SERIAL> --devices-file deploy/config/devices.yaml
+revoked_serials: []

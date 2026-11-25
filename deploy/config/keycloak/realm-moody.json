@@ -1,0 +1,47 @@
+{
+  "realm": "moody",
+  "enabled": true,
+  "sslRequired": "all",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "revokeRefreshToken": true,
+  "passwordPolicy": "length(14) and notUsername and passwordHistory(5)",
+  "otpPolicyType": "totp",
+  "clients": [
+    {
+      "clientId": "moody-gateway",
+      "name": "Moody edge gateway (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${MOODY_GATEWAY_CLIENT_SECRET}",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": false,
+      "protocol": "openid-connect",
+      "attributes": { "access.token.lifespan": "300" },
+      "protocolMappers": [
+        {
+          "name": "audience-moody-brain",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "moody-brain",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "moody-operator", "description": "Staff that can manage devices (future admin UI)" },
+      { "name": "moody-dpo", "description": "Data protection officer: audit log access" }
+    ]
+  }
+}

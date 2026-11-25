@@ -1,0 +1,17 @@
+# Lint configuration for the whole repository (server, firmware tools, red-team harness).
+line-length = 120
+target-version = "py312"
+src = ["server"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "S", "UP"]
+ignore = ["S101", "S311"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
+
+[lint.isort]
+known-first-party = ["moody"]
+
+[lint.per-file-ignores]
+"server/tests/*" = ["S", "B", "E501", "I001"]

@@ -1,0 +1,13 @@
+# ntfy - self-hosted push notifications for help requests (Apache-2.0 / GPL-2.0 dual licensed,
+# runs as a separate service). Docs: https://docs.ntfy.sh/config/
+base-url: "http://moody.lan:8088"
+listen-http: ":80"
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "24h"
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"     # nobody reads or writes without an account/token
+enable-login: true
+enable-signup: false
+attachment-cache-dir: ""            # no attachments: we only send short text
+# Do NOT set upstream-base-url: it would forward message metadata to ntfy.sh for iOS push.
+log-level: "info"

@@ -1,0 +1,30 @@
+# ---- Moody edge: RELEASE hardening (apply on top of sdkconfig.defaults) ----
+#   idf.py -B build-release -D SDKCONFIG=build-release/sdkconfig \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.release" build
+# !!! First boot of a release image burns eFuses: IRREVERSIBLE. Read docs/05-setup-device.md !!!
+
+# Secure Boot V2 (RSA-3072): only firmware signed with YOUR key will ever boot
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_V2_RSA_ENABLED=y
+CONFIG_SECURE_SIGNED_APPS_SCHEME_RSA_3072=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE=n
+
+# Flash Encryption (release mode): flash contents unreadable off-chip, plaintext reflashing disabled
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_SECURE_FLASH_ENCRYPTION_AES256=y
+
+# UART/USB ROM download mode restricted to "secure" mode (no flash read-out)
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+
+# NVS encryption (keys in the encrypted nvs_keys partition)
+CONFIG_NVS_ENCRYPTION=y
+
+# Anti-rollback-ish hygiene & less attack surface
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT=y
+CONFIG_ESP_DEBUG_OCDAWARE=n
