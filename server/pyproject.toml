@@ -13,7 +13,7 @@ authors = [{ name = "Moody contributors" }]
 # Every runtime dependency below is MIT / BSD / Apache-2.0 licensed (MIT-compatible).
 # See ../docs/10-licenze.md before adding a new one.
 dependencies = [
-  "websockets>=15,<18",       # BSD-3-Clause
+  "websockets>=17.4,<18",       # BSD-3-Clause
   "fastapi>=0.115,<1",        # MIT
   "uvicorn>=0.32,<1",         # BSD-3-Clause
   "httpx>=0.27,<1",           # BSD-3-Clause
