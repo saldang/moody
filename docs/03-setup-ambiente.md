@@ -2,7 +2,8 @@
 
 Come preparare il server che ospita Moody, passo dopo passo: sistema operativo cifrato e
 aggiornato, firewall, Docker, configurazione con `setup.sh` (PKI privata, segreti, `.env`),
-download dei modelli **una volta sola** e funzionamento offline, notifiche ntfy e, se vuoi,
+download dei modelli di **[QVAC](13-qvac.md)** (il runtime AI di Tether) **una volta sola** e
+funzionamento offline, notifiche ntfy e, se vuoi,
 integrazione con Home Assistant. Alla fine il server è pronto per i dispositivi
 ([05-setup-device.md](05-setup-device.md)) e per l'avvio ([06-running.md](06-running.md)).
 
@@ -142,6 +143,12 @@ docker compose version
 3. Da qui in poi aggiungi `-f compose.gpu.yaml` ai comandi `docker compose` ed esporta
    `MOODY_GPU=1` prima di lanciare `bootstrap-models.sh`.
 
+> ⚠️ **Sperimentale:** su Linux QVAC usa la GPU tramite **Vulkan**. `compose.gpu.yaml` riserva la GPU
+> al servizio `qvac` ed espone l'ICD Vulkan di NVIDIA (`NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility`).
+> Controlla nei log di `qvac` quale backend viene scelto: se Vulkan non è disponibile QVAC torna alla
+> CPU. Con lo stack classico (`compose.classic.yaml`) aggiungi lo stesso blocco `deploy:` al servizio
+> `ollama`, che usa CUDA.
+
 ## 4. Clonare il repository
 
 ```bash
@@ -176,7 +183,9 @@ Lo script è idempotente (puoi rilanciarlo) e crea:
 | Virtualenv con gli strumenti PKI e di provisioning | `.venv/` | Installa `server[pki]` (cryptography, pyserial) |
 | Configurazione | `deploy/.env` | Copiato da `.env.example`, con il tuo UID/GID e un topic ntfy casuale `moody-help-…` |
 | Chiave dati (Fernet) del diario e dei promemoria | `deploy/secrets/data_key` | Permessi `600`. **Senza questa chiave il database non è leggibile:** fanne un backup separato |
+| Chiave API tra brain/gateway e QVAC | `deploy/secrets/qvac_api_key` | Casuale, permessi `600`; QVAC rifiuta le richieste senza questa chiave |
 | Segnaposto per i token ntfy e Home Assistant | `deploy/secrets/ntfy_token`, `ha_token` | Vengono riempiti più avanti |
+| Cartelle dei dati | `deploy/data/brain`, `deploy/data/wellbeing`, `deploy/data/qvac-models` | La terza contiene i modelli scaricati da QVAC (~4 GB) |
 | Due CA indipendenti (ECDSA P-256, 10 anni) | `deploy/pki/device-ca/`, `deploy/pki/service-ca/` | Un certificato dispositivo non può mai autenticarsi come servizio. Vedi [04-pki-identita.md](04-pki-identita.md) |
 | Certificati dei servizi (`gateway`, `brain`, `wellbeing`) | `deploy/pki/services/<nome>/tls.{pem,key}` | Il gateway ha come SAN `moody.lan` e l'IP |
 | Registro dispositivi vuoto | `deploy/config/devices.yaml` | Ricaricato a caldo dal gateway |
@@ -192,11 +201,15 @@ Rivedi poi `deploy/.env`. Le voci principali:
 
 | Variabile | Default | Cosa cambia |
 |---|---|---|
-| `MOODY_LLM_MODEL` | `qwen3:8b` | Con un hardware modesto usa `qwen3:4b` |
-| `WHISPER_MODEL` | `small-int8` | `tiny-int8`/`base-int8` su CPU deboli, `medium-int8` con GPU |
-| `PIPER_VOICE` | `it_IT-paola-medium` | Controlla la licenza nella MODEL_CARD della voce ([10-licenze.md](10-licenze.md)) |
-| `MOODY_EMBED_MODEL` | `bge-m3` | Lascialo vuoto per disattivare la knowledge base |
-| `MOODY_GUARD_MODEL` | *(vuoto)* | Es. `granite3-guardian:2b` per un secondo filtro di sicurezza |
+| `QVAC_CONFIG` | `qvac.config.json` | Quali modelli carica QVAC (file in `deploy/config/qvac/`). `qvac.https.config.json` = solo Hugging Face, senza TTS (vedi sotto) |
+| `QVAC_MEM_LIMIT` | `12g` | Memoria massima del container `qvac` |
+| `MOODY_LLM_MODEL` | `moody-llm` | Alias del modello nella config di QVAC (Qwen3‑4B di default). Per cambiare modello modifica la config, non l'alias |
+| `MOODY_LLM_TEMPERATURE` | `0.2` | Bassa = chiamate agli strumenti più affidabili |
+| `MOODY_EMBED_MODEL` | `moody-embed` | Alias dell'embedding (bge‑m3). `none` disattiva la knowledge base |
+| `MOODY_RAG_MIN_SCORE` | `0.55` | Soglia di pertinenza dei documenti, tarata su bge‑m3 |
+| `MOODY_STT_BACKEND` / `MOODY_TTS_BACKEND` | `openai` / `openai` | `openai` = QVAC; `wyoming` = faster‑whisper / Piper |
+| `MOODY_TTS_VOICE` | `F1` | Voce di Supertonic 3 (F1–F5, M1–M5); con `wyoming` è il nome della voce Piper |
+| `MOODY_GUARD_MODEL` | *(vuoto)* | Es. `granite3-guardian:2b` per un secondo filtro di sicurezza: richiede un endpoint Ollama (`MOODY_GUARD_URL`) |
 | `MOODY_RETENTION_DAYS` | `30` | Conservazione massima del diario dell'umore e dei promemoria |
 | `MOODY_LOG_TRANSCRIPTS` | `false` | Tienilo `false` in produzione |
 | `MOODY_ESCALATION` | `ask` | `auto` invia la notifica di aiuto senza chiedere conferma (default in enterprise) |
@@ -204,7 +217,7 @@ Rivedi poi `deploy/.env`. Le voci principali:
 
 ## 7. Download dei modelli (una sola volta) e poi offline
 
-A runtime i container di Ollama, Whisper e Piper stanno solo su reti Docker `internal: true`,
+A runtime il container `qvac` sta solo sulle reti Docker `internal: true` (`core` e `ai`),
 **senza accesso a Internet**. Per scaricare i modelli serve un passaggio dedicato:
 
 ```bash
@@ -213,15 +226,50 @@ A runtime i container di Ollama, Whisper e Piper stanno solo su reti Docker `int
 
 Lo script:
 
-1. avvia `ollama`, `whisper` e `piper` con l'override `compose.bootstrap.yaml`, che aggiunge
-   temporaneamente una rete `egress`;
-2. esegue `ollama pull` di `MOODY_LLM_MODEL`, `MOODY_EMBED_MODEL` ed eventualmente di
-   `MOODY_GUARD_MODEL`;
-3. attende che Whisper e Piper scarichino il modello STT e la voce;
-4. ricrea i tre container **senza** la rete `egress`.
+1. costruisce l'immagine `moody/qvac` (Node.js + `@qvac/cli` 0.20.0) e genera al volo un override
+   che aggiunge temporaneamente una rete `egress` ai soli servizi di modelli dello stack attivo;
+2. avvia `qvac`, che scarica e carica i modelli dichiarati in `deploy/config/qvac/$QVAC_CONFIG`:
 
-I modelli restano nei volumi Docker `ollama`, `whisper` e `piper`. Per cambiare modello o voce,
-aggiorna `.env` e rilancia lo script.
+   | Alias | Modello | Licenza | Dimensione | Sorgente |
+   |---|---|---|---|---|
+   | `moody-llm` | Qwen3‑4B (`QWEN3_4B_INST_Q4_K_M`) | Apache‑2.0 | ~2,5 GB | registry QVAC |
+   | `moody-embed` | bge‑m3 Q8_0 (GGUF `ggml-org`) | MIT | ~635 MB | Hugging Face |
+   | `moody-stt` | TranscribePsy 250M (Tether) | Apache‑2.0 | ~305 MB | registry QVAC |
+   | `moody-tts` | Supertonic 3, italiano, voce F1 | **OpenRAIL** | ~126 MB | registry QVAC (solo P2P) |
+
+3. attende che `qvac` risulti `healthy` (tutti i modelli caricati; la prima volta può richiedere
+   parecchi minuti);
+4. ricrea i container **senza** la rete `egress`.
+
+I modelli restano in `deploy/data/qvac-models`. Per cambiarli modifica il file di config di QVAC
+(vedi [13 · QVAC](13-qvac.md)) e rilancia lo script.
+
+> ⚠️ **Registry peer-to-peer:** il registry di QVAC distribuisce i modelli via **Hyperswarm**, che
+> richiede **UDP in uscita** durante il bootstrap e rende visibile l'IP del server agli altri peer.
+> Se la rete lo blocca (tipico in azienda) o preferisci evitarlo, usa la variante solo HTTPS
+> (Hugging Face) con Piper per la voce:
+>
+> ```bash
+> # in deploy/.env: QVAC_CONFIG=qvac.https.config.json
+> MOODY_COMPOSE_FILES="compose.piper.yaml" ./scripts/bootstrap-models.sh
+> cd deploy && docker compose -f compose.yaml -f compose.piper.yaml up -d
+> ```
+>
+> Supertonic 3 è disponibile solo nel registry QVAC: nella variante HTTPS la voce è Piper
+> (GPL‑3.0, in un container separato). In alternativa puoi pre‑popolare `deploy/data/qvac-models`
+> da una macchina con accesso.
+
+**Stack classico** (Ollama + faster‑whisper + Piper, l'alternativa a QVAC):
+
+```bash
+MOODY_COMPOSE_FILES="compose.classic.yaml" ./scripts/bootstrap-models.sh
+cd deploy && docker compose -f compose.yaml -f compose.classic.yaml up -d && docker compose stop qvac
+```
+
+Con lo stack classico i modelli si scelgono con `OLLAMA_LLM_MODEL` (default `qwen3:8b`),
+`OLLAMA_EMBED_MODEL` (`bge-m3`), `WHISPER_MODEL` (`small-int8`) e `PIPER_VOICE`
+(`it_IT-paola-medium`, controlla la licenza nella MODEL_CARD della voce) e restano nei volumi
+Docker `ollama`, `whisper` e `piper`.
 
 ## 8. Notifiche di aiuto (ntfy)
 
@@ -270,29 +318,43 @@ Moody controlla la casa solo tramite un server MCP, con policy *deny by default*
 
 ### Mac mini
 
-Docker Desktop su macOS non accede alla GPU Apple. La soluzione pratica è eseguire **Ollama
-nativo** e lasciare in Docker il resto:
+Docker Desktop su macOS non accede alla GPU Apple. La soluzione pratica è eseguire **QVAC nativo**
+(supporta macOS arm64) e lasciare in Docker il resto:
 
-1. Installa Ollama per macOS, poi scarica i modelli: `ollama pull qwen3:8b && ollama pull bge-m3`.
-2. In `deploy/.env` imposta `MOODY_LLM_URL=http://host.docker.internal:11434`.
-3. Crea `deploy/compose.override.yaml` per escludere il servizio `ollama` e dare al `brain`
-   accesso all'host:
+1. Installa Node.js 24 e copia la config adattando la cache:
+   ```bash
+   mkdir -p ~/moody-qvac/models
+   sed 's#"/models"#"'"$HOME"'/moody-qvac/models"#' deploy/config/qvac/qvac.config.json > ~/moody-qvac/qvac.config.json
+   npx @qvac/cli@0.20.0 serve --openai --no-default -c ~/moody-qvac/qvac.config.json \
+     --host 127.0.0.1 --port 11435 --api-key-file deploy/secrets/qvac_api_key \
+     --allowed-host host.docker.internal
+   ```
+2. In `deploy/.env` imposta `MOODY_LLM_URL=http://host.docker.internal:11435/v1`.
+3. Crea `deploy/compose.override.yaml` per escludere il servizio `qvac` e dare a `brain` e
+   `gateway` accesso all'host:
    ```yaml
    services:
      brain:
        depends_on: !override [wellbeing]    # richiede Docker Compose >= 2.24.4
        networks: [core, ai, tools, lan]
-     ollama:
+     gateway:
+       depends_on: !override [brain]
+       environment:
+         MOODY_SPEECH_URL: http://host.docker.internal:11435/v1
+     qvac:
        profiles: [disabled]
    ```
 
-> ⚠️ **Compromesso:** il `brain` esce dalle reti `internal` e Ollama ascolta sull'host. Configura
-> Ollama perché ascolti solo su `127.0.0.1`/interfaccia Docker e attiva il firewall di macOS. La
-> superficie d'attacco è più ampia rispetto alla configurazione Linux: per una struttura usa Linux.
+> ⚠️ **Compromesso:** il `brain` esce dalle reti `internal` e QVAC gira sull'host, fuori dal
+> container read-only e con la cache KV su disco (`~/.qvac/kv-cache`, conservata fino a 24 ore).
+> Lascialo in ascolto solo su `127.0.0.1`, attiva il firewall di macOS e, se possibile, FileVault.
+> La superficie d'attacco è più ampia rispetto alla configurazione Linux: per una struttura usa Linux.
 
-### Enterprise: vLLM al posto di Ollama
+### Enterprise: vLLM per il solo LLM
 
-Con le GPU da data center conviene un server OpenAI-compatibile come **vLLM** (Apache-2.0). Non è
+QVAC serve tutti i modelli da un unico processo. Con le GPU da data center e molti turni
+contemporanei puoi spostare il **solo LLM** su un server OpenAI-compatibile come **vLLM**
+(Apache-2.0), lasciando a QVAC trascrizione, voce ed embedding. vLLM non è
 incluso nel compose: aggiungilo in un override sulla rete `ai` (immagine `vllm/vllm-openai` con
 versione fissata, modello con licenza Apache-2.0) e imposta:
 
@@ -302,18 +364,22 @@ MOODY_LLM_URL=http://vllm:8000/v1
 MOODY_LLM_MODEL=<nome del modello servito da vLLM>
 ```
 
-Embedding della knowledge base: per default seguono `MOODY_LLM_BACKEND`/`MOODY_LLM_URL`, quindi con
-`openai` vengono chiesti a `/v1/embeddings`. vLLM serve un modello per istanza: avvia una seconda
-istanza per `bge-m3` (MIT) e indicala esplicitamente:
+Embedding della knowledge base: per default seguono `MOODY_LLM_URL`, quindi andrebbero a vLLM.
+Per lasciarli a QVAC indicali esplicitamente (il brain usa la stessa chiave
+`deploy/secrets/qvac_api_key`; `qvac` è già sulla rete `ai`):
 
 ```bash
 MOODY_EMBED_BACKEND=openai
-MOODY_EMBED_URL=http://vllm-embed:8000/v1
-MOODY_EMBED_MODEL=BAAI/bge-m3
+MOODY_EMBED_URL=http://qvac:11435/v1
+MOODY_EMBED_MODEL=moody-embed
 ```
 
-> ℹ️ Il guard model opzionale (`MOODY_GUARD_MODEL`, Granite Guardian) parla l'API di **Ollama**: se
-> lo vuoi anche con vLLM, mantieni un piccolo servizio Ollama e punta `MOODY_GUARD_URL` a quello.
+Se cambi modello di embedding la knowledge base viene reindicizzata automaticamente al riavvio
+del brain.
+
+> ℹ️ Il guard model opzionale (`MOODY_GUARD_MODEL`, Granite Guardian) parla l'API di **Ollama**, non
+> quella di QVAC: se lo vuoi, aggiungi un piccolo servizio Ollama sulla rete `ai` e punta
+> `MOODY_GUARD_URL` a quello.
 
 ---
 

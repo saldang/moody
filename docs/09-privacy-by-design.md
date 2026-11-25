@@ -19,7 +19,7 @@ regolamento sui dispositivi medici. Chiude uno schema di DPIA e alcune linee gui
 | **1. Proattivo, non reattivo** | Minacce analizzate prima di scrivere codice; guardrail deterministici per crisi/emergenze; red teaming ripetibile | `docs/07`, `server/moody/brain/guardrails.py`, `redteam/` |
 | **2. Privacy come impostazione predefinita** | Nessuna trascrizione nei log; nessuna memoria conversazionale persistente; diario dell'umore usato **solo** se la persona lo chiede; retention 30 giorni; tool *deny by default* | `MOODY_LOG_TRANSCRIPTS=false`, `AgentSettings.session_ttl=600`, `MOODY_RETENTION_DAYS=30`, `deploy/config/tool-policy.yaml` |
 | **3. Privacy incorporata nel progetto** | Wake word sul dispositivo: niente audio prima di "Hi ESP" o del tocco; nessuna fotocamera; pseudonimi al posto dei nomi; identità iniettata lato server | firmware ESP-SR, `gateway/server.py` (audio accettato solo tra `listen_start` e `listen_end`), `devices.yaml`, `brain/tools.py` (`INJECTED_PARAMS`) |
-| **4. Funzionalità piena (positive-sum)** | Assistente utile (promemoria, attività, respirazione, domotica) **senza** cloud: tutto gira in locale con modelli open | `deploy/compose.yaml` (Ollama, faster-whisper, Piper locali) |
+| **4. Funzionalità piena (positive-sum)** | Assistente utile (promemoria, attività, respirazione, domotica) **senza** cloud: tutto gira in locale con modelli open | `deploy/compose.yaml` (QVAC di Tether: Qwen3‑4B, TranscribePsy, Supertonic 3, bge‑m3, tutti locali) |
 | **5. Sicurezza end-to-end, per tutto il ciclo di vita** | mTLS su ogni salto, due CA, Secure Boot + Flash Encryption, diario cifrato, retention automatica, cancellazione su richiesta, factory reset | `common/tls.py`, `moody/pki.py`, `wellbeing_mcp/store.py` |
 | **6. Visibilità e trasparenza** | Codice aperto MIT; il sistema dichiara di essere un'AI; policy leggibili in YAML; eventi di audit documentati | `brain/prompts.py`, `docs/08` §10 |
 | **7. Rispetto per l'utente** | Mute hardware; cancellazione a voce; nessuna inferenza emotiva; incoraggia i contatti umani; linguaggio semplice e risposte brevi | system prompt, `erase_my_data` |
@@ -32,7 +32,8 @@ regolamento sui dispositivi medici. Chiude uno schema di DPIA e alcune linee gui
 |------|------|------------|------------|-----------------------------|
 | **Audio ambientale** prima del wake word | solo buffer circolare in RAM del dispositivo | millisecondi | non esce mai dal dispositivo | — (non trattato dal sistema) |
 | **Audio della richiesta** (dopo wake word/tocco) | RAM del gateway | fino alla fine della trascrizione (max 15 s di audio) | TLS (mTLS) in transito; **mai scritto su disco** | esecuzione del servizio richiesto (art. 6.1.b) o consenso |
-| **Trascrizione** | RAM del brain, cronologia di sessione | ≤ 10 minuti di inattività, max 6 scambi | non loggata (`MOODY_LOG_TRANSCRIPTS=false`) | come sopra |
+| **Trascrizione** | RAM del brain, cronologia di sessione | una sola interazione (nuova conversazione a ogni wake word/tocco), ≤ 10 minuti di inattività, max 6 scambi | non loggata (`MOODY_LOG_TRANSCRIPTS=false`) | come sopra |
+| **Cache KV dell'LLM** (stato derivato dalla conversazione) | RAM del container `qvac` (tmpfs) | fino a 24 h o al riavvio del container (limite 2 GB nel tmpfs) | **mai su disco**; rete interna, chiave API | come sopra |
 | **Risposta e audio TTS** | RAM gateway | durata della risposta | TLS | come sopra |
 | **Diario dell'umore** (punteggio 1-5, nota facoltativa ≤ 280 caratteri) | SQLite `deploy/data/wellbeing/` | `MOODY_RETENTION_DAYS` (default 30) | Fernet (AES + HMAC), pseudonimo hashato con HMAC, `secure_delete` | **categoria particolare** (benessere/salute): **consenso esplicito** art. 9.2.a |
 | **Promemoria** (testo ≤ 200 caratteri, orario) | SQLite come sopra | fino alla consegna + 1 giorno, comunque entro la retention | come sopra | esecuzione del servizio / consenso; attenzione ai promemoria su farmaci (dato sanitario) |
@@ -49,12 +50,16 @@ delle conversazioni, dati di presenza (il dock radar non va montato), telemetria
 
 ## 3. Elaborazione solo locale
 
-- **Nessuna chiamata a servizi cloud** nel percorso dei dati: STT (faster-whisper), LLM (Ollama/vLLM),
-  embedding (bge-m3), TTS (Piper) girano sul server della casa o della struttura.
+- **Nessuna chiamata a servizi cloud** nel percorso dei dati: STT (TranscribePsy), LLM (Qwen3‑4B),
+  embedding (bge‑m3) e TTS (Supertonic 3) girano in **QVAC di Tether** sul server della casa o della
+  struttura (alternative locali: faster‑whisper, Ollama/vLLM, Piper).
 - **Runtime offline**: le reti Docker `core`, `ai`, `tools` sono `internal`; i modelli vengono scaricati una
-  volta con `scripts/bootstrap-models.sh` e poi i container sono ricreati senza Internet.
-- **Nessuna telemetria** nel codice Moody. ntfy è configurato senza `upstream-base-url` (che inoltrerebbe
-  metadati a ntfy.sh).
+  volta con `scripts/bootstrap-models.sh` e poi i container sono ricreati senza Internet. Il registry
+  peer-to-peer di QVAC viene contattato **solo** in quel momento (e rende visibile l'IP del server agli
+  altri peer); in alternativa c'è la config solo HTTPS o il pre-caricamento dei modelli
+  ([13-qvac.md](13-qvac.md)).
+- **Nessuna telemetria** nel codice Moody, e nessuna documentata in QVAC (in ogni caso a runtime QVAC non
+  ha accesso a Internet). ntfy è configurato senza `upstream-base-url` (che inoltrerebbe metadati a ntfy.sh).
 
 > ⚠️ **Attenzione**: se colleghi Home Assistant (`compose.homeassistant.yaml`) o usi un backend LLM remoto
 > (`MOODY_LLM_BACKEND=openai` verso un servizio esterno), il perimetro cambia: aggiorna la DPIA.

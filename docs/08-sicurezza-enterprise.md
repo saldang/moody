@@ -251,6 +251,16 @@ Raccomandazioni:
   `pip install -e "server[dev]" && pip-audit`.
 - **Dependabot** o Renovate sul repository per pip, Docker e GitHub Actions.
 - **SBOM** (opzionale): `syft` per generare l'elenco dei componenti delle immagini, `grype` per le CVE.
+  Vale in particolare per `moody/qvac`, costruita in locale con Node.js e i pacchetti npm `@qvac/*`
+  (versione fissata da `QVAC_CLI_VERSION`): `npm audit` non è eseguito dalla CI, includilo nel tuo processo.
+- **Modelli come supply chain**: i modelli di QVAC vengono verificati con SHA‑256 al download. Il
+  registry è peer-to-peer (Hyperswarm): durante il bootstrap l'IP del server è visibile agli altri peer
+  e serve UDP in uscita. In una struttura valuta la config solo HTTPS
+  (`deploy/config/qvac/qvac.https.config.json` + `compose.piper.yaml`) oppure il **pre-caricamento**
+  di `deploy/data/qvac-models` da una postazione di staging; a runtime QVAC non ha accesso a Internet.
+  Vedi [13-qvac.md](13-qvac.md).
+- **Licenze dei modelli**: la voce Supertonic 3 è sotto licenza **OpenRAIL** (restrizioni d'uso):
+  fai verificare i termini all'ufficio legale prima del rollout ([10-licenze.md](10-licenze.md)).
 - Firmware: segui gli advisory di ESP-IDF; rilascia firmware firmati.
 - Red teaming prima di ogni release e a ogni cambio di modello ([11-red-teaming.md](11-red-teaming.md)).
 - Canale di segnalazione responsabile delle vulnerabilità (vedi `SECURITY.md` del repository).
@@ -267,7 +277,8 @@ Raccomandazioni:
   - il servizio è *best effort* per definizione (non è un sistema salvavita);
   - due server con configurazione identica e dispositivi che puntano a un nome DNS con failover;
   - stato minimo: solo `deploy/data/wellbeing/` (SQLite) va replicato/backuppato;
-  - GPU dimensionata per i picchi (es. mattino): backend `openai` verso vLLM con `MOODY_LLM_BACKEND=openai`;
+  - GPU dimensionata per i picchi (es. mattino): QVAC con Vulkan oppure il solo LLM su vLLM
+    (`MOODY_LLM_URL` verso vLLM, embedding e voce restano a QVAC, vedi [03-setup-ambiente.md](03-setup-ambiente.md));
   - UPS e monitoraggio della salute dei container.
 
 ---
@@ -291,6 +302,7 @@ Raccomandazioni:
 **Rete e server**
 - [ ] VLAN IoT dedicata, client isolation, nessun accesso Internet dai dispositivi
 - [ ] Runtime dei container senza Internet; firewall host e `DOCKER-USER`
+- [ ] QVAC: chiave API presente, cache KV su tmpfs, modelli scaricati da sorgente approvata (registry P2P o HTTPS/pre-caricati)
 - [ ] Disco cifrato, patch automatiche, accesso remoto solo via VPN + MFA
 
 **Operatività**

@@ -58,16 +58,28 @@ stessa famiglia di chip (ESP32-S3), ma come riferimento scegliamo l'**Espressif 
 
 ### Server: scegli **una** opzione
 
-Il server esegue gateway, LLM, riconoscimento vocale (Whisper) e sintesi vocale (Piper). Il
-fattore che più incide su qualità e velocità è la memoria disponibile per il modello linguistico.
+Il server esegue gateway, brain e **[QVAC di Tether](13-qvac.md)**, che serve LLM, embedding,
+riconoscimento vocale (TranscribePsy) e sintesi vocale (Supertonic 3). Il fattore che più incide su
+qualità e velocità è la memoria (e la potenza) disponibile per il modello linguistico.
 
-| Opzione | Prezzo | Modello consigliato (`MOODY_LLM_MODEL`) | Pro | Contro |
+**Requisiti minimi dello stack QVAC di default**: i modelli occupano circa **5 GB di RAM**
+(Qwen3‑4B ~2,5 GB, bge‑m3 ~0,6 GB, TranscribePsy ~0,3 GB, Supertonic 3 ~0,13 GB, più la cache KV in
+RAM); servono quindi **16 GB di RAM come minimo, 32 GB consigliati**. L'immagine Docker di QVAC pesa
+circa 5,3 GB, i modelli circa 4 GB su disco. Su Linux QVAC usa la CPU o la GPU tramite Vulkan
+(supporto NVIDIA in Docker sperimentale, vedi [13 · QVAC](13-qvac.md)).
+
+| Opzione | Prezzo | Modello consigliato (alias `moody-llm` in QVAC) | Pro | Contro |
 |---|---|---|---|---|
-| **A. Mini PC AMD Ryzen 7 8845HS / 7840HS, 32 GB RAM, NVMe 1 TB** *(consigliata)* | 450–600 € | `qwen3:8b`, Whisper `small-int8` | Buon equilibrio tra costo, consumi (15–35 W) e silenziosità. Gira bene solo su CPU | Le risposte richiedono qualche secondo. Su Linux l'iGPU non è sfruttata da Ollama in modo affidabile |
-| **B. Mini PC Intel N150, 16 GB RAM** *(budget)* | 180–250 € | `qwen3:4b`, Whisper `tiny-int8`/`base-int8` | Economico, consuma 6–10 W | Lento: risposte di 5–10 s. La qualità dell'italiano cala con i modelli piccoli |
-| **C. Desktop + GPU NVIDIA RTX 3060 12 GB usata** | 250 € (GPU usata) + PC | `qwen3:8b` (anche modelli 14B quantizzati), Whisper `medium-int8` | Molto veloce (risposte sotto i 2 s), puoi riusare un PC esistente | Consumo e rumore maggiori. Richiede `nvidia-container-toolkit` e `compose.gpu.yaml` |
-| **D. Apple Mac mini M4, 16 GB** | 700 € | `qwen3:8b` | Silenzioso, efficiente, ottimo con Ollama | Docker su macOS **non** accede alla GPU: Ollama va eseguito nativamente, fuori da Docker, e si perde parte dell'isolamento di rete (vedi [03-setup-ambiente.md](03-setup-ambiente.md#mac-mini)) |
-| **E. NVIDIA Jetson Orin Nano Super Dev Kit 8 GB** | 280 € | `qwen3:4b` | Molto efficiente (7–25 W), con GPU | ARM64 con JetPack: sistema più "di nicchia", 8 GB condivisi tra CPU e GPU sono il limite |
+| **A. Mini PC AMD Ryzen 7 8845HS / 7840HS, 32 GB RAM, NVMe 1 TB** *(consigliata)* | 450–600 € | Qwen3‑4B (`QWEN3_4B_INST_Q4_K_M`, default) | Buon equilibrio tra costo, consumi (15–35 W) e silenziosità. Gira solo su CPU | Le risposte richiedono diversi secondi, di più quando il modello chiama uno strumento |
+| **B. Mini PC Intel N150, 16 GB RAM** *(budget)* | 180–250 € | Qwen3‑4B (lento) oppure **BotPsy‑0.8B** di Tether (~4× più veloce, strumenti meno affidabili) | Economico, consuma 6–10 W | Lento; con 16 GB sei al minimo. La qualità dell'italiano cala con i modelli piccoli |
+| **C. Desktop + GPU NVIDIA RTX 3060 12 GB usata** | 250 € (GPU usata) + PC | Qwen3‑8B (`QWEN3_8B_INST_Q4_K_M`), chiamate agli strumenti più affidabili | Molto più veloce, puoi riusare un PC esistente | Consumo e rumore maggiori. GPU in QVAC via Vulkan (`compose.gpu.yaml`, sperimentale); in alternativa Ollama con CUDA (`compose.classic.yaml`) |
+| **D. Apple Mac mini M4, 16 GB** | 700 € | Qwen3‑4B | Silenzioso, efficiente; QVAC supporta macOS arm64 nativamente | Docker su macOS **non** accede alla GPU: QVAC va eseguito nativamente, fuori da Docker, e si perde parte dell'isolamento di rete (vedi [03-setup-ambiente.md](03-setup-ambiente.md#mac-mini)) |
+| **E. NVIDIA Jetson Orin Nano Super Dev Kit 8 GB** | 280 € | BotPsy‑0.8B o Qwen3‑1.7B | Molto efficiente (7–25 W), con GPU | ARM64 con JetPack: sistema "di nicchia", 8 GB condivisi tra CPU e GPU sono sotto il minimo consigliato per lo stack completo |
+
+> ℹ️ **Prestazioni misurate** (test di questo progetto, macchina virtuale con 4 vCPU, solo CPU):
+> trascrizione 0,1–0,3 s per 2–3 s di audio; turni dell'LLM 25–45 s senza strumenti e 50–75 s con
+> una chiamata a uno strumento; frasi di emergenza 0,5 s (guardrail deterministico, senza LLM).
+> Su un mini PC Ryzen a 8 core o con una GPU la latenza è molto più bassa: misurala sul tuo hardware.
 
 > 💡 **Suggerimento:** se non sai cosa scegliere prendi l'opzione A. Con un SSD NVMe di almeno
 > 512 GB hai spazio per modelli, immagini Docker e backup locali cifrati.
@@ -114,7 +126,7 @@ Esempio di dimensionamento: **50 residenti**, un dispositivo per appartamento o 
 | # | Componente | Q.tà | Prezzo indicativo | Note |
 |---|---|---|---|---|
 | 8 | **Server GPU** 1U/2U o tower: CPU 16+ core, **64–128 GB RAM ECC**, **2× NVMe in mirror (RAID1)**, 2 alimentatori | 1 (o 2 per HA) | 6.000–9.000 € cad. | Con l'alta affidabilità servono due nodi, uno attivo e uno in standby |
-| 9 | GPU **NVIDIA L4 24 GB** (bassi consumi, 72 W, data center) **oppure** RTX 4000 Ada 20 GB | 1 per nodo | 2.500–3.500 € | Esegue il LLM via vLLM (`MOODY_LLM_BACKEND=openai`) e Whisper |
+| 9 | GPU **NVIDIA L4 24 GB** (bassi consumi, 72 W, data center) **oppure** RTX 4000 Ada 20 GB | 1 per nodo | 2.500–3.500 € | Esegue il LLM (QVAC con Vulkan, oppure vLLM/Ollama con CUDA) e la trascrizione |
 | 10 | UPS rack 1500–3000 VA con scheda di rete | 1 | 800–1.500 € | Arresto pulito automatico |
 | 11 | **Switch gestito** con VLAN e PoE per gli AP | 1–2 | 400–1.200 € | VLAN dedicata ai dispositivi Moody |
 | 12 | Wi-Fi enterprise: AP con **WPA3** e **PPSK** (una chiave per dispositivo) o 802.1X | secondo planimetria | 150–400 € per AP | Con PPSK puoi revocare un singolo dispositivo anche a livello Wi-Fi |
@@ -140,13 +152,15 @@ struttura con 50 residenti, raramente parlano più di 3–5 persone nello stesso
 
 | Hardware LLM | Modello | Backend | Turni contemporanei con latenza accettabile (< 3 s) |
 |---|---|---|---|
-| Mini PC Ryzen, solo CPU | `qwen3:8b` | Ollama | 1 (2 con code brevi) |
-| RTX 3060 12 GB | `qwen3:8b` | Ollama (`OLLAMA_NUM_PARALLEL=2–4`) | 2–4 |
+| Mini PC Ryzen, solo CPU | Qwen3‑4B | QVAC | 1 (latenza di diversi secondi) |
+| RTX 3060 12 GB | Qwen3‑8B | QVAC (Vulkan) o Ollama (`OLLAMA_NUM_PARALLEL=2–4`) | 2–4 |
 | NVIDIA L4 24 GB | modello 8B | vLLM | 8–15 |
 | RTX 4000 Ada 20 GB | modello 8B | vLLM | 6–12 |
 | 2× L4 (due nodi) | modello 8B | vLLM | 16–30 (o 8–15 con failover) |
 
-> ℹ️ Sono stime di massima. Whisper (STT) usa a sua volta CPU o GPU. Misura con il tuo carico reale
+> ℹ️ Sono stime di massima, non misure (tranne la riga CPU, vedi sopra). Anche la trascrizione usa CPU
+> o GPU. Per molti turni contemporanei vLLM (`MOODY_LLM_BACKEND=openai`) resta l'opzione più
+> collaudata per il solo LLM. Misura con il tuo carico reale
 > prima di comprare il secondo nodo.
 
 ---
