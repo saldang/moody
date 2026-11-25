@@ -1,0 +1,66 @@
+# Enterprise / senior-living overlay: Keycloak (OIDC) between gateway and brain.
+#   docker compose -f compose.yaml -f compose.enterprise.yaml up -d
+# See docs/08-sicurezza-enterprise.md
+services:
+  keycloak-db:
+    <<: &hardening
+      restart: unless-stopped
+      security_opt: ["no-new-privileges:true"]
+      logging: { driver: local, options: { max-size: "10m", max-file: "3" } }
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    hostname: keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+    volumes: ["keycloak-db:/var/lib/postgresql/data"]
+    networks: [idp]
+
+  keycloak:
+    <<: *hardening
+    image: keycloak/keycloak:${KEYCLOAK_VERSION:-26.8.2}
+    hostname: keycloak
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+      KC_HOSTNAME: https://keycloak:8443
+      KC_HTTPS_CERTIFICATE_FILE: /pki/self/tls.pem
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /pki/self/tls.key
+      KC_HTTP_ENABLED: "false"
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      MOODY_GATEWAY_CLIENT_SECRET: ${MOODY_GATEWAY_CLIENT_SECRET:?set MOODY_GATEWAY_CLIENT_SECRET in .env}
+    volumes:
+      - ./pki/services/keycloak:/pki/self:ro
+      - ./config/keycloak:/opt/keycloak/data/import:ro
+    # Admin console only through an SSH tunnel: ssh -L 8444:127.0.0.1:8444 moody-host
+    ports: ["127.0.0.1:8444:8443"]
+    networks: [idp, core]
+    depends_on: [keycloak-db]
+
+  gateway:
+    environment:
+      MOODY_OIDC_TOKEN_URL: https://keycloak:8443/realms/moody/protocol/openid-connect/token
+      MOODY_OIDC_CLIENT_ID: moody-gateway
+      MOODY_OIDC_CLIENT_SECRET_FILE: /run/secrets/gateway_client_secret
+    secrets: [gateway_client_secret]
+
+  brain:
+    environment:
+      MOODY_OIDC_ISSUER: https://keycloak:8443/realms/moody
+      MOODY_OIDC_AUDIENCE: moody-brain
+      MOODY_OIDC_ALLOWED_CLIENTS: moody-gateway
+      MOODY_ESCALATION: ${MOODY_ESCALATION:-auto}
+
+networks:
+  idp: { internal: true }
+
+volumes:
+  keycloak-db: {}
+
+secrets:
+  gateway_client_secret: { file: ./secrets/gateway_client_secret }

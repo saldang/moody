@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install -e ".[dev,pki]"
+      - name: Lint
+        run: ruff check moody tests ../firmware/tools ../redteam   # config: ../ruff.toml
+      - name: Test
+        run: pytest -q
+      - name: Audit dependencies (known CVEs)
+        run: pip-audit --skip-editable
+
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate compose files
+        working-directory: deploy
+        run: |
+          cp .env.example .env
+          docker compose -f compose.yaml config -q
+          KEYCLOAK_ADMIN_PASSWORD=x KEYCLOAK_DB_PASSWORD=x MOODY_GATEWAY_CLIENT_SECRET=x \
+            docker compose -f compose.yaml -f compose.enterprise.yaml config -q
+          docker compose -f compose.yaml -f compose.bootstrap.yaml -f compose.gpu.yaml -f compose.homeassistant.yaml config -q
+      - name: Build server image
+        run: docker build -t moody/server:ci server
+
+  firmware:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.5.6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build (development)
+        working-directory: firmware
+        shell: bash
+        run: . $IDF_PATH/export.sh && idf.py set-target esp32s3 build
+      - name: Build (release, throwaway signing key - CI only)
+        working-directory: firmware
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          espsecure.py generate_signing_key --version 2 --scheme rsa3072 secure_boot_signing_key.pem
+          idf.py -B build-release -D SDKCONFIG=build-release/sdkconfig \
+                 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.release" build
+          rm secure_boot_signing_key.pem

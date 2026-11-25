@@ -1,0 +1,113 @@
+"""Wire the brain together from environment variables and serve it over mTLS."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import ssl
+from pathlib import Path
+
+import uvicorn
+
+from ..common.config import env, env_bool, env_int, read_secret
+from ..common.logging import setup_logging
+from ..common.tls import TLSFiles, client_context
+from .agent import Agent, AgentSettings
+from .app import create_app
+from .auth import OIDCVerifier
+from .guardrails import GuardModel
+from .llm import OllamaClient, OpenAICompatClient
+from .rag import KnowledgeBase, OllamaEmbedder, OpenAICompatEmbedder
+from .tools import MCPProvider, ToolPolicy, ToolRegistry
+
+log = logging.getLogger("moody.brain")
+
+
+def build_agent() -> Agent:
+    llm_url = env("MOODY_LLM_URL", "http://ollama:11434")
+    model = env("MOODY_LLM_MODEL", "qwen3:8b")
+    if env("MOODY_LLM_BACKEND", "ollama") == "openai":
+        llm = OpenAICompatClient(llm_url, model, api_key=read_secret("MOODY_LLM_API_KEY", ""))
+    else:
+        llm = OllamaClient(llm_url, model)
+
+    tls = TLSFiles(Path(env("MOODY_TLS_CERT", required=True)), Path(env("MOODY_TLS_KEY", required=True)),
+                   Path(env("MOODY_TLS_CA", required=True)))
+    providers = [MCPProvider("wellbeing", env("MOODY_WELLBEING_URL", "https://wellbeing:8090/mcp"),
+                             ssl_context=client_context(tls))]
+    if env("MOODY_HA_MCP_URL"):
+        # Home Assistant "Model Context Protocol Server" integration (long-lived token).
+        providers.append(MCPProvider("homeassistant", env("MOODY_HA_MCP_URL"),
+                                     bearer_token=read_secret("MOODY_HA_TOKEN")))
+    registry = ToolRegistry(providers, ToolPolicy.load(env("MOODY_TOOL_POLICY", "/config/tool-policy.yaml")))
+
+    kb = None
+    embed_model = env("MOODY_EMBED_MODEL", "bge-m3")
+    if embed_model:
+        data_dir = Path(env("MOODY_DATA_DIR", "/data"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+        embed_url = env("MOODY_EMBED_URL", llm_url)
+        if env("MOODY_EMBED_BACKEND", env("MOODY_LLM_BACKEND", "ollama")) == "openai":
+            embedder = OpenAICompatEmbedder(embed_url, embed_model, read_secret("MOODY_LLM_API_KEY", ""))
+        else:
+            embedder = OllamaEmbedder(embed_url, embed_model)
+        kb = KnowledgeBase(data_dir / "knowledge.sqlite3", embedder)
+
+    guard_model = env("MOODY_GUARD_MODEL")
+    guard = GuardModel(env("MOODY_GUARD_URL", llm_url), guard_model) if guard_model else None
+
+    settings = AgentSettings(
+        locale=env("MOODY_LOCALE", "it"),
+        tz=env("TZ", "Europe/Rome"),
+        log_transcripts=env_bool("MOODY_LOG_TRANSCRIPTS", False),
+        escalation=env("MOODY_ESCALATION", "ask"),
+    )
+    return Agent(llm, registry, kb, settings, guard)
+
+
+def main() -> None:
+    setup_logging(env("MOODY_LOG_LEVEL", "INFO"))
+    agent = build_agent()
+
+    verifier = None
+    if env("MOODY_OIDC_ISSUER"):
+        # Keycloak presents a service-CA certificate: trust only that CA (no client cert needed).
+        ca_only = ssl.create_default_context(cafile=env("MOODY_TLS_CA"))
+        verifier = OIDCVerifier(
+            env("MOODY_OIDC_ISSUER"), env("MOODY_OIDC_AUDIENCE", "moody-brain"),
+            {c for c in env("MOODY_OIDC_ALLOWED_CLIENTS", "moody-gateway").split(",") if c},
+            env("MOODY_OIDC_JWKS_URL"),
+            ssl_context=ca_only,
+        )
+
+    async def startup() -> None:
+        if agent.kb is not None:
+            folder = Path(env("MOODY_KNOWLEDGE_DIR", "/knowledge"))
+            try:
+                added = await agent.kb.index_dir(folder)
+                log.info("knowledge indexed", extra={"fields": {"new_chunks": added}})
+            except Exception as exc:  # noqa: BLE001
+                log.warning("knowledge indexing failed: %s", type(exc).__name__)
+        await agent.tools.refresh(force=True)
+
+    config = uvicorn.Config(
+        create_app(agent, verifier),
+        host="0.0.0.0",  # noqa: S104 - container-internal network only
+        port=env_int("MOODY_BRAIN_PORT", 8080),
+        ssl_certfile=env("MOODY_TLS_CERT"),
+        ssl_keyfile=env("MOODY_TLS_KEY"),
+        ssl_ca_certs=env("MOODY_TLS_CA"),
+        ssl_cert_reqs=ssl.CERT_REQUIRED,
+        log_config=None,
+        server_header=False,
+    )
+
+    async def run() -> None:
+        await startup()
+        await uvicorn.Server(config).serve()
+
+    asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+# Optional: let the brain reach Home Assistant's MCP server on your LAN.
+# This gives the brain container a route outside the internal networks:
+# restrict it with the host firewall to the Home Assistant IP only
+# (see docs/07-sicurezza-home.md, "DOCKER-USER").
+services:
+  brain:
+    networks: [core, ai, tools, lan]

@@ -1,0 +1,11 @@
+# Name,   Type, SubType,  Offset,  Size,  Flags
+# nvs holds Wi-Fi credentials, gateway URI, CA, device cert and the device PRIVATE KEY.
+# In release builds it is encrypted (NVS encryption, keys in nvs_keys protected by flash encryption).
+nvs,      data, nvs,      ,        0x6000,
+nvs_keys, data, nvs_keys, ,        0x1000, encrypted
+otadata,  data, ota,      ,        0x2000,
+phy_init, data, phy,      ,        0x1000,
+ota_0,    app,  ota_0,    ,        3M,
+ota_1,    app,  ota_1,    ,        3M,
+# ESP-SR wake word model (WakeNet9 "Hi ESP"); flashed automatically by the esp-sr component
+model,    data, spiffs,   ,        4M,

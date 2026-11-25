@@ -1,0 +1,168 @@
+# Moody - home profile (single host). See docs/03-setup-ambiente.md and docs/06-running.md
+#
+# Network segmentation (privacy & security by design):
+#   lan    : the only network with a published port (gateway 8443, ntfy 8088)
+#   core   : gateway <-> brain, whisper, piper        (internal: no Internet)
+#   ai     : brain <-> ollama                         (internal: no Internet)
+#   tools  : brain <-> wellbeing <-> ntfy             (internal: no Internet)
+# Models are downloaded once with compose.bootstrap.yaml, then the runtime is offline.
+
+name: moody
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  logging:
+    driver: local
+    options: { max-size: "10m", max-file: "3" }
+
+x-moody: &moody
+  <<: *hardening
+  image: moody/server:${MOODY_VERSION:-0.1.0}
+  build: { context: ../server }
+  user: "${MOODY_UID:-1000}:${MOODY_GID:-1000}"
+  read_only: true
+  tmpfs: ["/tmp:size=16m,mode=1777"]
+  pids_limit: 128
+
+x-moody-env: &moody-env
+  TZ: ${TZ:-Europe/Rome}
+  MOODY_LOG_LEVEL: ${MOODY_LOG_LEVEL:-INFO}
+  MOODY_LOCALE: ${MOODY_LOCALE:-it}
+  MOODY_TLS_CERT: /pki/self/tls.pem
+  MOODY_TLS_KEY: /pki/self/tls.key
+  MOODY_TLS_CA: /pki/service-ca.pem
+
+services:
+  gateway:
+    <<: *moody
+    command: ["moody-gateway"]
+    hostname: gateway
+    ports: ["${MOODY_GATEWAY_BIND:-0.0.0.0}:8443:8443"]
+    environment:
+      <<: *moody-env
+      MOODY_DEVICE_CA: /pki/device-ca.pem
+      MOODY_DEVICES_FILE: /config/devices.yaml
+      MOODY_BRAIN_URL: https://brain:8080
+      MOODY_TTS_VOICE: ${PIPER_VOICE:-it_IT-paola-medium}
+      MOODY_FIRMWARE_DIR: /firmware
+    volumes:
+      - ./pki/services/gateway:/pki/self:ro
+      - ./pki/service-ca/ca.pem:/pki/service-ca.pem:ro
+      - ./pki/device-ca/ca.pem:/pki/device-ca.pem:ro
+      - ./config/devices.yaml:/config/devices.yaml:ro
+      - ./firmware:/firmware:ro          # signed OTA image + version.txt (optional)
+    networks: [lan, core]
+    depends_on: [brain, whisper, piper]
+    mem_limit: 256m
+
+  brain:
+    <<: *moody
+    command: ["moody-brain"]
+    hostname: brain
+    environment:
+      <<: *moody-env
+      MOODY_LLM_BACKEND: ${MOODY_LLM_BACKEND:-ollama}
+      MOODY_LLM_URL: ${MOODY_LLM_URL:-http://ollama:11434}
+      MOODY_LLM_MODEL: ${MOODY_LLM_MODEL:-qwen3:8b}
+      MOODY_EMBED_MODEL: ${MOODY_EMBED_MODEL:-bge-m3}
+      MOODY_EMBED_BACKEND: ${MOODY_EMBED_BACKEND:-}
+      MOODY_EMBED_URL: ${MOODY_EMBED_URL:-}
+      MOODY_GUARD_MODEL: ${MOODY_GUARD_MODEL:-}
+      MOODY_GUARD_URL: ${MOODY_GUARD_URL:-}
+      MOODY_TOOL_POLICY: /config/tool-policy.yaml
+      MOODY_KNOWLEDGE_DIR: /knowledge
+      MOODY_DATA_DIR: /data
+      MOODY_WELLBEING_URL: https://wellbeing:8090/mcp
+      MOODY_ESCALATION: ${MOODY_ESCALATION:-ask}
+      MOODY_LOG_TRANSCRIPTS: ${MOODY_LOG_TRANSCRIPTS:-false}
+      MOODY_HA_MCP_URL: ${MOODY_HA_MCP_URL:-}
+      MOODY_HA_TOKEN_FILE: /run/secrets/ha_token
+    secrets: [ha_token]
+    volumes:
+      - ./pki/services/brain:/pki/self:ro
+      - ./pki/service-ca/ca.pem:/pki/service-ca.pem:ro
+      - ./config/tool-policy.yaml:/config/tool-policy.yaml:ro
+      - ./knowledge:/knowledge:ro
+      - ./data/brain:/data
+    networks: [core, ai, tools]
+    depends_on: [ollama, wellbeing]
+    mem_limit: 512m
+
+  wellbeing:
+    <<: *moody
+    command: ["moody-wellbeing"]
+    hostname: wellbeing
+    environment:
+      <<: *moody-env
+      MOODY_DATA_DIR: /data
+      MOODY_DATA_KEY_FILE: /run/secrets/data_key
+      MOODY_RETENTION_DAYS: ${MOODY_RETENTION_DAYS:-30}
+      MOODY_NTFY_URL: http://ntfy
+      MOODY_NTFY_TOPIC: ${MOODY_NTFY_TOPIC:-}
+      MOODY_NTFY_TOKEN_FILE: /run/secrets/ntfy_token
+    secrets: [data_key, ntfy_token]
+    volumes:
+      - ./pki/services/wellbeing:/pki/self:ro
+      - ./pki/service-ca/ca.pem:/pki/service-ca.pem:ro
+      - ./data/wellbeing:/data
+    networks: [tools]
+    mem_limit: 256m
+
+  ollama:
+    <<: *hardening
+    image: ollama/ollama:${OLLAMA_VERSION:-0.40.18}
+    hostname: ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+    volumes: ["ollama:/root/.ollama"]
+    networks: [ai]
+
+  whisper:
+    <<: *hardening
+    image: rhasspy/wyoming-whisper:${WHISPER_VERSION:-3.9.1}
+    hostname: whisper
+    command: ["--model", "${WHISPER_MODEL:-small-int8}", "--language", "${MOODY_LOCALE:-it}"]
+    volumes: ["whisper:/data"]
+    networks: [core]
+
+  piper:
+    <<: *hardening
+    image: rhasspy/wyoming-piper:${PIPER_VERSION:-2.5.4}
+    hostname: piper
+    command: ["--voice", "${PIPER_VOICE:-it_IT-paola-medium}"]
+    volumes: ["piper:/data"]
+    networks: [core]
+
+  ntfy:
+    <<: *hardening
+    image: binwiederhier/ntfy:${NTFY_VERSION:-v2.38.2}
+    hostname: ntfy
+    command: ["serve"]
+    environment:
+      TZ: ${TZ:-Europe/Rome}
+    volumes:
+      - ./config/ntfy/server.yml:/etc/ntfy/server.yml:ro
+      - ntfy:/var/lib/ntfy
+    ports: ["${MOODY_NTFY_BIND:-127.0.0.1}:8088:80"]
+    networks: [tools, lan]
+
+networks:
+  lan: {}
+  core: { internal: true }
+  ai: { internal: true }
+  tools: { internal: true }
+
+volumes:
+  ollama: {}
+  whisper: {}
+  piper: {}
+  ntfy: {}
+
+secrets:
+  data_key: { file: ./secrets/data_key }
+  ntfy_token: { file: ./secrets/ntfy_token }
+  ha_token: { file: ./secrets/ha_token }

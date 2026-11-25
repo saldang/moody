@@ -1,0 +1,14 @@
+# One-off: give the model containers temporary Internet access to download weights.
+#   docker compose -f compose.yaml -f compose.bootstrap.yaml up -d ollama whisper piper
+#   ../scripts/bootstrap-models.sh
+#   docker compose up -d          # recreated WITHOUT Internet access
+services:
+  ollama:
+    networks: [ai, egress]
+  whisper:
+    networks: [core, egress]
+  piper:
+    networks: [core, egress]
+
+networks:
+  egress: {}

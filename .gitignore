@@ -1,0 +1,31 @@
+# secrets & runtime state - NEVER commit
+deploy/.env
+deploy/pki/*
+!deploy/pki/.gitkeep
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+deploy/data/
+deploy/config/devices.yaml
+redteam/results/
+*.pem
+*.key
+*.csr
+*.p12
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# firmware
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock.bak
+secure_boot_signing_key*.pem
+deploy/firmware/*
+!deploy/firmware/.gitkeep
