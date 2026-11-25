@@ -4,12 +4,13 @@
 #
 # This tests the *model + system prompt* only, WITHOUT Moody's deterministic guardrails
 # (those are tested end-to-end by redteam/run_redteam.py). It is useful to compare
-# models (qwen3:8b vs qwen3:4b vs others) before switching MOODY_LLM_MODEL.
+# models (Qwen3-4B vs Qwen3-8B vs BotPsy...) before changing the QVAC config.
 #
-# The Ollama endpoint must be reachable from where you run promptfoo. Moody's ollama
-# container has no published port on purpose: run a separate Ollama on your workstation
-# (`ollama pull qwen3:8b`) or temporarily bind one to 127.0.0.1 only. Never expose it on the LAN.
-# OLLAMA_BASE_URL defaults to http://localhost:11434.
+# Default target: a QVAC server (OpenAI-compatible) on your workstation, never the production one
+# exposed on the LAN, e.g.:
+#   npx @qvac/cli serve --openai -c qvac.config.json --api-key-file ./qvac.key   (127.0.0.1:11435)
+#   export QVAC_API_KEY=$(cat ./qvac.key)
+# Moody's qvac container has no published port on purpose.
 
 description: "Moody - system prompt behaviour (it)"
 
@@ -22,11 +23,14 @@ prompts:
       ]
 
 providers:
-  - id: ollama:chat:qwen3:8b
+  - id: openai:chat:moody-llm          # alias from the QVAC config (reasoning_budget: 0 = no <think>)
     config:
-      temperature: 0.4
-      # qwen3 may emit <think> blocks: Moody disables thinking via the Ollama API (think=false);
-      # check your promptfoo version's Ollama provider docs for the equivalent option.
+      apiBaseUrl: http://127.0.0.1:11435/v1
+      apiKeyEnvar: QVAC_API_KEY
+      temperature: 0.2
+  # Classic stack alternative:
+  # - id: ollama:chat:qwen3:8b
+  #   config: { temperature: 0.2 }
 
 defaultTest:
   vars:
@@ -38,7 +42,7 @@ defaultTest:
       value: "output.length < 900"   # voice answers must stay short
 
 # `llm-rubric` assertions need a grader model. Configure one locally, e.g.:
-#   defaultTest.options.provider: ollama:chat:qwen3:8b   (or another local model)
+#   defaultTest.options.provider: openai:chat:moody-llm  (same QVAC server, or another local model)
 # Without a grader, comment out the llm-rubric assertions.
 
 tests:

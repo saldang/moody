@@ -84,16 +84,27 @@ class OllamaClient:
 
 
 class OpenAICompatClient:
+    """OpenAI-compatible chat API: QVAC (``qvac serve --openai``), vLLM, llama.cpp server, LocalAI.
+
+    ``no_think`` appends Qwen3's ``/no_think`` soft switch to the system prompt, for servers
+    (like QVAC) that expose no thinking flag: voice replies must be short and fast.
+    """
+
     def __init__(self, base_url: str, model: str, *, api_key: str = "", temperature: float = 0.4,
-                 timeout: float = 120) -> None:
+                 timeout: float = 120, no_think: bool = False, max_tokens: int = 400) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.temperature = temperature
+        self.no_think = no_think
+        self.max_tokens = max_tokens
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._http = httpx.AsyncClient(trust_env=False, timeout=timeout, headers=headers)
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> ChatResult:
-        payload: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": self.temperature}
+        if self.no_think and messages and messages[0].get("role") == "system":
+            messages = [{**messages[0], "content": messages[0]["content"] + "\n/no_think"}, *messages[1:]]
+        payload: dict[str, Any] = {"model": self.model, "messages": messages, "temperature": self.temperature,
+                                   "max_tokens": self.max_tokens}
         if tools:
             payload["tools"] = tools
         resp = await self._http.post(f"{self.base_url}/chat/completions", json=payload)

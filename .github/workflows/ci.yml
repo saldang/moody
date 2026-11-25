@@ -44,8 +44,15 @@ jobs:
           KEYCLOAK_ADMIN_PASSWORD=x KEYCLOAK_DB_PASSWORD=x MOODY_GATEWAY_CLIENT_SECRET=x \
             docker compose -f compose.yaml -f compose.enterprise.yaml config -q
           docker compose -f compose.yaml -f compose.bootstrap.yaml -f compose.gpu.yaml -f compose.homeassistant.yaml config -q
+          docker compose -f compose.yaml -f compose.classic.yaml -f compose.gpu.yaml config -q
+          QVAC_CONFIG=qvac.https.config.json docker compose -f compose.yaml -f compose.piper.yaml config -q
+          for f in config/qvac/*.json; do python3 -m json.tool "$f" > /dev/null; done
       - name: Build server image
         run: docker build -t moody/server:ci server
+      - name: Build QVAC image
+        run: docker build -t moody/qvac:ci deploy/qvac
+      - name: QVAC image smoke test
+        run: docker run --rm --entrypoint qvac moody/qvac:ci --version
 
   firmware:
     runs-on: ubuntu-24.04

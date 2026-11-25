@@ -46,9 +46,12 @@ if [[ ! -f "$DEPLOY/.env" ]]; then
 fi
 
 # 3. runtime folders and secrets (files, never env vars)
-mkdir -p "$DEPLOY/data/brain" "$DEPLOY/data/wellbeing" "$DEPLOY/secrets"
+mkdir -p "$DEPLOY/data/brain" "$DEPLOY/data/wellbeing" "$DEPLOY/data/qvac-models" "$DEPLOY/secrets"
 [[ -s "$DEPLOY/secrets/data_key" ]] || \
   "$PY" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' > "$DEPLOY/secrets/data_key"
+# Bearer key between brain/gateway and the QVAC server (internal network only)
+[[ -s "$DEPLOY/secrets/qvac_api_key" ]] || \
+  "$PY" -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "$DEPLOY/secrets/qvac_api_key"
 touch "$DEPLOY/secrets/ntfy_token" "$DEPLOY/secrets/ha_token"
 chmod 600 "$DEPLOY/secrets/"*
 

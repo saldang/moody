@@ -19,7 +19,7 @@ from ..common.logging import audit
 from ..common.pii import redact
 from .guardrails import BLOCK_REPLY, GuardModel, sanitize_output, screen_input
 from .llm import LLMClient, ToolCall
-from .prompts import system_prompt
+from .prompts import context_message, system_prompt
 from .rag import KnowledgeBase, format_passages
 from .tools import ToolRegistry
 
@@ -56,6 +56,15 @@ class AgentSettings:
     # Who gets alerted on crisis/emergency: "ask" = offer first, "auto" = notify immediately
     escalation: str = "ask"
     help_tool: str = "wellbeing.request_help"
+
+
+def _mentions_tool(content: str, tool_names: set[str]) -> bool:
+    lowered = (content or "").lower().replace("_", "")
+    for name in tool_names:
+        bare = name.split("__", 1)[-1].lower()
+        if name.lower().replace("_", "") in lowered or (len(bare) > 6 and bare.replace("_", "") in lowered):
+            return True
+    return False
 
 
 class Agent:
@@ -137,18 +146,28 @@ class Agent:
 
         # 4. LLM + tools
         await self.tools.refresh()
-        messages: list[dict] = [{"role": "system", "content": system_prompt(self._now_local(),
-                                                                          self.settings.locale)}]
+        # Static system prompt first (+ tool definitions rendered by the chat template): an identical
+        # prefix on every turn, reusable from the KV cache. Per-turn context rides in the user turn.
+        dynamic = context_message(self._now_local(), self.settings.locale)
         if context:
-            messages.append({"role": "system", "content": context})
+            dynamic += "\n" + context
+        messages: list[dict] = [{"role": "system", "content": system_prompt()}]
         messages.extend(sess.history)
-        messages.append({"role": "user", "content": text})
+        messages.append({"role": "user", "content": f"<contesto>\n{dynamic}\n</contesto>\n\n{text}"})
         tools = self.tools.llm_tools()
+        tool_names = {t["function"]["name"] for t in tools}
 
         reply = ""
+        retried = False
         for _ in range(self.settings.max_tool_rounds):
             result = await self.llm.chat(messages, tools or None)
             if not result.tool_calls:
+                if not retried and _mentions_tool(result.content, tool_names):
+                    # Small models sometimes *describe* a tool instead of calling it: nudge once.
+                    retried = True
+                    messages.append({"role": "user", "content": "Non descrivere lo strumento: chiamalo davvero, "
+                                                                "oppure rispondi senza strumenti."})
+                    continue
                 reply = result.content
                 break
             messages.append(self.llm.assistant_message(result))

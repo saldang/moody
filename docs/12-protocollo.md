@@ -43,7 +43,7 @@ l'uscita di Piper (di solito 22,05 kHz) a 16 kHz e la invia in blocchi da 4 KiB.
 | `type` | Campi | Quando |
 |---|---|---|
 | `hello` | `fw` (versione), `proto` (1) | subito dopo la connessione |
-| `listen_start` | — | wake word o tocco: inizia la finestra di ascolto |
+| `listen_start` | `follow_up?` (bool) | wake word o tocco: inizia la finestra di ascolto. Senza `follow_up` il gateway apre una **nuova conversazione** (la memoria breve non passa da un'interazione all'altra); con `follow_up: true` (riapertura automatica dopo una domanda di Moody) resta nella stessa |
 | *(binario)* | PCM | solo durante la finestra |
 | `listen_end` | — | fine parlato (VAD on‑device) o tocco |
 | `abort` | — | annulla ascolto/risposta (tocco durante la risposta, nessuno ha parlato) |
@@ -78,7 +78,7 @@ G → D   {"type":"reply","display":"Domani alle 10 c'e' la passeggiata nel parc
 G → D   {"type":"tts_start","rate":16000}
 G → D   <PCM> <PCM> …
 G → D   {"type":"tts_end","follow_up":true}
-D → G   {"type":"listen_start"}            ← finestra di follow-up (6 s)
+D → G   {"type":"listen_start","follow_up":true}   ← finestra di follow-up (6 s), stessa conversazione
 ```
 
 Promemoria proattivi: ogni 30 s il gateway chiede al brain i promemoria scaduti per quel

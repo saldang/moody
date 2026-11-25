@@ -1,0 +1,56 @@
+# Alternative AI stack: Ollama (LLM + embeddings) + faster-whisper + Piper (Wyoming).
+#   docker compose -f compose.yaml -f compose.classic.yaml up -d
+# QVAC still starts but is unused; stop it with: docker compose stop qvac
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  logging: { driver: local, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  gateway:
+    environment:
+      MOODY_STT_BACKEND: wyoming
+      MOODY_TTS_BACKEND: wyoming
+      MOODY_TTS_VOICE: ${PIPER_VOICE:-it_IT-paola-medium}
+    depends_on: !override [brain, whisper, piper]
+
+  brain:
+    environment:
+      MOODY_LLM_BACKEND: ollama
+      MOODY_LLM_URL: http://ollama:11434
+      MOODY_LLM_MODEL: ${OLLAMA_LLM_MODEL:-qwen3:8b}
+      MOODY_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-bge-m3}
+    depends_on: !override [ollama, wellbeing]
+
+  ollama:
+    <<: *hardening
+    image: ollama/ollama:${OLLAMA_VERSION:-0.40.18}
+    hostname: ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+    volumes: ["ollama:/root/.ollama"]
+    networks: [ai]
+
+  whisper:
+    <<: *hardening
+    image: rhasspy/wyoming-whisper:${WHISPER_VERSION:-3.9.1}
+    hostname: whisper
+    command: ["--model", "${WHISPER_MODEL:-small-int8}", "--language", "${MOODY_LOCALE:-it}"]
+    volumes: ["whisper:/data"]
+    networks: [core]
+
+  piper:
+    <<: *hardening
+    image: rhasspy/wyoming-piper:${PIPER_VERSION:-2.5.4}
+    hostname: piper
+    command: ["--voice", "${PIPER_VOICE:-it_IT-paola-medium}"]
+    volumes: ["piper:/data"]
+    networks: [core]
+
+volumes:
+  ollama: {}
+  whisper: {}
+  piper: {}

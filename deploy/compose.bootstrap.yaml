@@ -1,14 +1,10 @@
-# One-off: give the model containers temporary Internet access to download weights.
-#   docker compose -f compose.yaml -f compose.bootstrap.yaml up -d ollama whisper piper
-#   ../scripts/bootstrap-models.sh
-#   docker compose up -d          # recreated WITHOUT Internet access
+# One-off: give the QVAC container temporary Internet access to download model weights.
+# QVAC's registry is peer-to-peer (Hyperswarm: needs outbound UDP) plus HTTPS (Hugging Face).
+# scripts/bootstrap-models.sh generates the equivalent override for whatever stack you run
+# (QVAC, classic, piper) and then recreates the containers WITHOUT Internet access.
 services:
-  ollama:
-    networks: [ai, egress]
-  whisper:
-    networks: [core, egress]
-  piper:
-    networks: [core, egress]
+  qvac:
+    networks: [core, ai, egress]
 
 networks:
   egress: {}

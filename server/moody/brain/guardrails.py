@@ -43,7 +43,8 @@ _CRISIS = [
     r"\b(kill myself|end my life|suicid\w*|self[- ]harm)\b",
 ]
 _EMERGENCY = [
-    r"\bsono (caduto|caduta)\b",
+    r"\bsono cadut[oaie]\b",
+    r"\b(e|e') cadut[oa]\b",
     r"\bnon riesco (ad? alzarmi|a respirare)\b",
     r"\bnon respiro\b",
     r"\bdolore (forte )?al petto\b",

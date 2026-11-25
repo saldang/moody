@@ -79,6 +79,17 @@ class ToolProvider(Protocol):
     async def call(self, tool: str, arguments: dict[str, Any]) -> str: ...
 
 
+def _root_cause(exc: BaseException) -> str:
+    """Unwrap ExceptionGroup/__cause__ chains (anyio, httpx) into a short, loggable reason."""
+    while True:
+        if isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+            exc = exc.exceptions[0]
+        elif exc.__cause__ is not None:
+            exc = exc.__cause__
+        else:
+            return f"{type(exc).__name__}: {str(exc)[:160]}"
+
+
 def _strip_injected(schema: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
     schema = json.loads(json.dumps(schema or {"type": "object", "properties": {}}))
     props = schema.get("properties", {})
@@ -147,7 +158,7 @@ class ToolRegistry:
                 for spec in await provider.list_tools():
                     specs[spec.name] = spec
             except Exception as exc:  # noqa: BLE001 - a broken provider must not break the assistant
-                log.warning("tool provider %s unavailable: %s", provider.name, type(exc).__name__)
+                log.warning("tool provider %s unavailable: %s", provider.name, _root_cause(exc))
         self._specs = specs
         self._refreshed = time.monotonic()
 

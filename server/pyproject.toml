@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "moody"
 version = "0.1.0"
 description = "Privacy-first, open-source wellbeing voice assistant: edge gateway, local LLM brain, wellbeing MCP tools"
-readme = "../README.md"
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Moody contributors" }]

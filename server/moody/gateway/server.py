@@ -197,6 +197,10 @@ class Gateway:
             elif kind == "listen_start":
                 if conn.speaking:
                     conn.speaking.cancel()
+                if not message.get("follow_up"):
+                    # A new wake word / tap starts a NEW conversation: short-term memory only spans
+                    # one interaction and its follow-ups (privacy, and small LLMs stay on task).
+                    conn.session_id = secrets.token_hex(8)
                 conn.listening = True
                 conn.buffer.clear()
             elif kind == "listen_end":
