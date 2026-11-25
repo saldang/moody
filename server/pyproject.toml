@@ -13,21 +13,21 @@ authors = [{ name = "Moody contributors" }]
 # Every runtime dependency below is MIT / BSD / Apache-2.0 licensed (MIT-compatible).
 # See ../docs/10-licenze.md before adding a new one.
 dependencies = [
-  "websockets>=15,<18",       # BSD-3-Clause
-  "fastapi>=0.115,<1",        # MIT
+  "websockets>=17.4,<18",     # BSD-3-Clause
+  "fastapi>=0.165.0,<1",      # MIT
   "uvicorn>=0.32,<1",         # BSD-3-Clause
   "httpx>=0.27,<1",           # BSD-3-Clause
-  "wyoming>=1.6,<2",          # MIT
+  "wyoming>=1.11.0,<2",       # MIT
   "mcp>=2.3,<3",              # MIT
   "pydantic>=2.9,<3",         # MIT
   "pyyaml>=6,<7",             # MIT
   "cryptography>=44",         # Apache-2.0 OR BSD-3-Clause
-  "pyjwt[crypto]>=2.9,<3",    # MIT
+  "pyjwt[crypto]>=2.15.1,<3", # MIT
   "numpy>=2,<3",              # BSD-3-Clause
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "pip-audit>=2.7"]
+dev = ["pytest>=9.2.0", "pytest-asyncio>=0.24", "ruff>=0.8", "pip-audit>=2.7"]
 pki = ["pyserial>=3.5"]  # BSD-3-Clause, only for firmware provisioning
 
 [project.scripts]
