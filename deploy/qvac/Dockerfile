@@ -1,7 +1,7 @@
 # QVAC by Tether - local AI runtime exposing an OpenAI-compatible API (qvac serve --openai).
 # Serves Moody's LLM, embeddings, speech-to-text and text-to-speech. See docs/13-qvac.md
 # Licenses: @qvac/cli and @qvac/sdk Apache-2.0, QVAC Fabric (llama.cpp fork) MIT.
-FROM node:24.22.3-trixie-slim
+FROM node:26.13.0-trixie-slim
 
 ARG QVAC_CLI_VERSION=0.20.0
 # libatomic1: required by the QVAC worker on minimal images. No ffmpeg: Moody uses native WAV only.
