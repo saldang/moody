@@ -79,8 +79,9 @@ def chunk_markdown(text: str, max_chars: int = 900) -> list[str]:
 
 
 class KnowledgeBase:
-    def __init__(self, db_path: Path | str, embedder: Embedder) -> None:
+    def __init__(self, db_path: Path | str, embedder: Embedder, min_score: float = 0.55) -> None:
         self.embedder = embedder
+        self.min_score = min_score
         self._db = sqlite3.connect(str(db_path), check_same_thread=False)
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS chunk (id INTEGER PRIMARY KEY, source TEXT, digest TEXT, "
@@ -99,7 +100,10 @@ class KnowledgeBase:
             source = str(path.relative_to(folder))
             seen.add(source)
             content = path.read_text(encoding="utf-8")
-            digest = hashlib.sha256(content.encode()).hexdigest()
+            # The embedding model is part of the digest: switching model forces a full re-index
+            # (vectors from different models live in incompatible spaces, even with equal dims).
+            model_id = getattr(self.embedder, "model", type(self.embedder).__name__)
+            digest = hashlib.sha256(f"{model_id}\0{content}".encode()).hexdigest()
             row = self._db.execute("SELECT digest FROM chunk WHERE source=? LIMIT 1", (source,)).fetchone()
             if row and row[0] == digest:
                 continue
@@ -128,7 +132,14 @@ class KnowledgeBase:
         self._rows = [(s, t) for s, t, _ in rows]
         self._matrix = np.vstack([np.frombuffer(v, dtype=np.float32) for _, _, v in rows]) if rows else None
 
-    async def search(self, query: str, k: int = 3, min_score: float = 0.35) -> list[Passage]:
+    async def search(self, query: str, k: int = 3, min_score: float | None = None,
+                     margin: float = 0.05) -> list[Passage]:
+        """Top-k passages above ``min_score`` and within ``margin`` of the best one.
+
+        The relative margin drops weakly related chunks even with embedding models whose absolute
+        scores are compressed (everything scores 0.8): only clearly relevant text reaches the LLM.
+        """
+        min_score = self.min_score if min_score is None else min_score
         if self._matrix is None:
             self._load()
         if self._matrix is None:
@@ -137,9 +148,10 @@ class KnowledgeBase:
         q /= np.linalg.norm(q) or 1.0
         scores = self._matrix @ q
         best = np.argsort(-scores)[:k]
+        top = float(scores[best[0]])
         return [
             Passage(self._rows[i][0], self._rows[i][1], float(scores[i]))
-            for i in best if scores[i] >= min_score
+            for i in best if scores[i] >= min_score and scores[i] >= top - margin
         ]
 
 

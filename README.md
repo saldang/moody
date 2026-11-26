@@ -8,7 +8,8 @@ software **open source, self‑hosted e senza cloud**.
 
 - 🎙️ Wake word **"Hi ESP" riconosciuta sul dispositivo**: prima di quel momento nessun suono lascia la stanza
 - 🔐 **mTLS ovunque** con PKI privata a due CA, **Secure Boot V2 + Flash Encryption + NVS encryption**, OTA firmata
-- 🧠 LLM **locale** (Ollama/vLLM + Qwen3, Apache‑2.0), speech locale (faster‑whisper + Piper)
+- 🧠 AI **locale** con **[QVAC](docs/13-qvac.md) di Tether**: LLM Qwen3‑4B, trascrizione TranscribePsy,
+  voce Supertonic 3 in italiano, embedding bge‑m3, tutto dietro un'unica API OpenAI‑compatibile sul tuo server
 - 🛡️ Guardrail deterministici per crisi ed emergenze, policy dei tool **deny‑by‑default**, red teaming incluso
 - 💚 Funzioni di benessere: check‑in dell'umore *dichiarato*, promemoria, esercizi di respirazione,
   informazioni sulle attività, richiesta di aiuto a un familiare o allo staff
@@ -25,9 +26,9 @@ software **open source, self‑hosted e senza cloud**.
 ```mermaid
 flowchart LR
     D["① ESP32-S3-BOX-3<br/>wake word on-device<br/>Secure Boot + Flash Enc."] -- "WSS + mTLS" --> G["② moody-gateway<br/>registry · pipeline voce · OTA"]
-    G <--> S["faster-whisper / Piper<br/>(Wyoming)"]
+    G <--> Q["QVAC (Tether)<br/>STT TranscribePsy · TTS Supertonic 3"]
     G -- "HTTPS mTLS<br/>(+ OIDC Keycloak)" --> B["③ moody-brain<br/>guardrail · agent · RAG"]
-    B <--> L["Ollama / vLLM<br/>Qwen3"]
+    B <--> Q2["QVAC (Tether)<br/>Qwen3-4B · bge-m3"]
     B -- "MCP mTLS" --> W["wellbeing MCP<br/>diario cifrato · promemoria"]
     B -. "MCP" .-> H["Home Assistant<br/>(opzionale)"]
     W --> N["ntfy<br/>richieste di aiuto"]
@@ -37,7 +38,8 @@ flowchart LR
 |---|---|
 | ESP32‑S3 / SenseCAP, "Hi ESP", Secure Boot, Flash Encryption | ESP32‑S3‑BOX‑3, firmware ESP‑IDF proprio, ESP‑SR WakeNet9, Secure Boot V2, Flash Encryption, NVS encryption, OTA firmata |
 | Python sandbox con WebSocket mTLS | `moody-gateway`: WSS mTLS, registry con revoca, nessun accesso generico alla rete di casa |
-| Microsoft Foundry (LLM, agent, knowledge) | `moody-brain` + Ollama/vLLM + Qwen3, RAG locale (bge‑m3 + SQLite) |
+| Microsoft Foundry (LLM, agent, knowledge) | `moody-brain` + **QVAC di Tether** (Qwen3‑4B), RAG locale (bge‑m3 + SQLite) |
+| Servizi speech (cloud) | **QVAC**: TranscribePsy (STT, Tether) e Supertonic 3 (TTS); alternativa faster‑whisper + Piper |
 | MCP per la smart home | MCP (SDK ufficiale): server `wellbeing` + server MCP di Home Assistant |
 | Microsoft Entra ID | PKI privata (due CA) + Keycloak (OIDC) |
 | Foundry guardrails / prompt shields | Guardrail deterministici + IBM Granite Guardian (opzionale) |
@@ -59,8 +61,8 @@ Prezzi indicativi (novembre 2026). Elenco completo, alternative e dimensionament
 | **ESP32‑S3‑BOX‑3** (kit con BOX‑3‑DOCK) | 1 | 50–60 € | Display touch, 2 microfoni, speaker, **mute hardware**, **nessuna fotocamera**. Non serve la scheda radar BOX‑3‑SENSOR |
 | Cavo USB‑C **dati** | 1 | 8 € | Per flash e provisioning |
 | Alimentatore USB 5 V / 2 A | 1 | 10 € | |
-| **Server** (una opzione): mini PC Ryzen 7 8845HS/7840HS, 32 GB RAM, NVMe 1 TB *(consigliato)* | 1 | 450–600 € | `qwen3:8b` su CPU |
-| ↳ in alternativa, budget: mini PC Intel N150, 16 GB RAM | 1 | 180–250 € | `qwen3:4b`, più lento |
+| **Server** (una opzione): mini PC Ryzen 7 8845HS/7840HS, 32 GB RAM, NVMe 1 TB *(consigliato)* | 1 | 450–600 € | QVAC con Qwen3‑4B su CPU (modelli ~5 GB di RAM) |
+| ↳ in alternativa, budget: mini PC Intel N150, 16 GB RAM | 1 | 180–250 € | 16 GB è il minimo; più lento (o BotPsy‑0.8B) |
 | ↳ in alternativa, performance: PC esistente + RTX 3060 12 GB usata | 1 | ~250 € | risposte sotto i 2 s |
 | Router/AP con VLAN e SSID IoT (compatibile OpenWrt) | 1 | 80–150 € | Fortemente consigliato |
 | UPS 600–850 VA | 1 | 70–120 € | Opzionale |
@@ -104,7 +106,7 @@ due CA e i certificati dei servizi, e `deploy/config/devices.yaml`. Crea poi un 
 
 ### 3. Scarica i modelli, poi resta offline
 ```bash
-./scripts/bootstrap-models.sh   # accesso temporaneo a Internet solo per i container dei modelli
+./scripts/bootstrap-models.sh   # QVAC scarica i modelli con accesso temporaneo a Internet, poi torna offline
 ./scripts/ntfy-setup.sh         # notifiche delle richieste di aiuto (app ntfy sul telefono)
 ```
 
@@ -115,6 +117,10 @@ docker compose up -d                                              # casa
 docker compose -f compose.yaml -f compose.enterprise.yaml up -d   # struttura
 docker compose ps
 ```
+Il container `qvac` deve risultare `healthy` (modelli caricati) prima che brain e gateway partano.
+Senza UDP verso Internet (registry P2P di QVAC) o per evitare licenze non OSI usa la variante
+Hugging Face + Piper: `QVAC_CONFIG=qvac.https.config.json docker compose -f compose.yaml -f compose.piper.yaml up -d`
+([13 · QVAC](docs/13-qvac.md)). Lo stack alternativo Ollama + faster‑whisper + Piper è in `compose.classic.yaml`.
 
 ### 5. Firmware e provisioning del dispositivo ([05](docs/05-setup-device.md))
 ```bash
@@ -155,8 +161,8 @@ audio. Prova:
 | Principio | Come è realizzato |
 |---|---|
 | Niente audio ambientale | Wake word sul dispositivo; il gateway scarta l'audio ricevuto fuori da una finestra di ascolto; l'audio non viene mai scritto su disco |
-| Niente cloud | LLM, STT, TTS, RAG e notifiche girano sul tuo server; a regime le reti dei container AI sono `internal` |
-| Minimizzazione dei dati | Pseudonimi (`res-001`); trascrizioni solo in RAM (sessione ≤ 10 min); nessun log delle trascrizioni |
+| Niente cloud | LLM, STT, TTS, RAG (QVAC) e notifiche girano sul tuo server; a regime le reti dei container AI sono `internal`, la cache KV di QVAC sta solo in RAM (tmpfs) |
+| Minimizzazione dei dati | Pseudonimi (`res-001`); trascrizioni solo in RAM; ogni nuova interazione è una conversazione nuova (sessione ≤ 10 min); nessun log delle trascrizioni |
 | Dati sensibili cifrati | Diario dell'umore e promemoria cifrati (Fernet) con pseudonimo in HMAC e **retention** automatica (30 giorni di default) |
 | Diritti degli interessati | Cancellazione a voce, con conferma ("cancella i miei dati") |
 | Identità forte | mTLS con due CA separate, chiavi generate sul dispositivo, revoca a caldo, OIDC in enterprise |
@@ -174,7 +180,7 @@ Per segnalare vulnerabilità: [SECURITY.md](SECURITY.md).
 ```text
 firmware/   firmware ESP-IDF (C) per ESP32-S3-BOX-3 + tools/provision.py
 server/     pacchetto Python "moody": gateway, brain, wellbeing MCP, PKI, test
-deploy/     docker compose (home, enterprise, gpu, bootstrap, homeassistant), config, knowledge
+deploy/     docker compose (home con QVAC, classic, piper, enterprise, gpu, bootstrap, homeassistant), qvac/, config, knowledge
 scripts/    setup.sh, bootstrap-models.sh, ntfy-setup.sh
 redteam/    casi avversariali, harness mTLS, configurazione promptfoo
 docs/       documentazione passo passo (00–12)
@@ -195,6 +201,7 @@ sviluppo sia release) nel container ufficiale di ESP‑IDF.
 
 ## Licenza
 
-[MIT](LICENSE). Alcuni componenti eseguiti come servizi separati hanno licenze diverse (es. Piper,
-GPL‑3.0, in un container a parte; ESP‑SR utilizzabile solo su chip Espressif): leggi
+[MIT](LICENSE). Lo stack di default non contiene componenti GPL. Alcuni componenti hanno licenze
+particolari: la voce Supertonic 3 è sotto **OpenRAIL** (restrizioni d'uso), Piper (GPL‑3.0) è solo
+negli overlay opzionali, ESP‑SR è utilizzabile solo su chip Espressif: leggi
 [docs/10-licenze.md](docs/10-licenze.md) prima di distribuire dispositivi o immagini.

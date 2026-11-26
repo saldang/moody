@@ -24,12 +24,16 @@ log = logging.getLogger("moody.brain")
 
 
 def build_agent() -> Agent:
-    llm_url = env("MOODY_LLM_URL", "http://ollama:11434")
-    model = env("MOODY_LLM_MODEL", "qwen3:8b")
-    if env("MOODY_LLM_BACKEND", "ollama") == "openai":
-        llm = OpenAICompatClient(llm_url, model, api_key=read_secret("MOODY_LLM_API_KEY", ""))
+    # Default: QVAC by Tether (OpenAI-compatible). "ollama" keeps the native Ollama API.
+    backend = env("MOODY_LLM_BACKEND", "openai")
+    llm_url = env("MOODY_LLM_URL", "http://qvac:11435/v1" if backend == "openai" else "http://ollama:11434")
+    model = env("MOODY_LLM_MODEL", "moody-llm" if backend == "openai" else "qwen3:8b")
+    if backend == "openai":
+        llm = OpenAICompatClient(llm_url, model, api_key=read_secret("MOODY_LLM_API_KEY", ""),
+                                 no_think=env_bool("MOODY_LLM_NO_THINK", False),
+                                 temperature=float(env("MOODY_LLM_TEMPERATURE", "0.2")))
     else:
-        llm = OllamaClient(llm_url, model)
+        llm = OllamaClient(llm_url, model, temperature=float(env("MOODY_LLM_TEMPERATURE", "0.2")))
 
     tls = TLSFiles(Path(env("MOODY_TLS_CERT", required=True)), Path(env("MOODY_TLS_KEY", required=True)),
                    Path(env("MOODY_TLS_CA", required=True)))
@@ -42,19 +46,28 @@ def build_agent() -> Agent:
     registry = ToolRegistry(providers, ToolPolicy.load(env("MOODY_TOOL_POLICY", "/config/tool-policy.yaml")))
 
     kb = None
-    embed_model = env("MOODY_EMBED_MODEL", "bge-m3")
-    if embed_model:
+    embed_model = env("MOODY_EMBED_MODEL", "moody-embed" if backend == "openai" else "bge-m3")
+    if embed_model.lower() not in ("none", "off", "false"):  # "none" disables the knowledge base
         data_dir = Path(env("MOODY_DATA_DIR", "/data"))
         data_dir.mkdir(parents=True, exist_ok=True)
         embed_url = env("MOODY_EMBED_URL", llm_url)
-        if env("MOODY_EMBED_BACKEND", env("MOODY_LLM_BACKEND", "ollama")) == "openai":
-            embedder = OpenAICompatEmbedder(embed_url, embed_model, read_secret("MOODY_LLM_API_KEY", ""))
+        if env("MOODY_EMBED_BACKEND", backend) == "openai":
+            embed_key = read_secret("MOODY_EMBED_API_KEY", "") or read_secret("MOODY_LLM_API_KEY", "")
+            embedder = OpenAICompatEmbedder(embed_url, embed_model, embed_key)
         else:
             embedder = OllamaEmbedder(embed_url, embed_model)
-        kb = KnowledgeBase(data_dir / "knowledge.sqlite3", embedder)
+        kb = KnowledgeBase(data_dir / "knowledge.sqlite3", embedder,
+                           min_score=float(env("MOODY_RAG_MIN_SCORE", "0.55")))
 
+    # Granite Guardian speaks the Ollama API: with an OpenAI-compatible runtime (QVAC, vLLM) it needs
+    # its own Ollama endpoint in MOODY_GUARD_URL, otherwise it is disabled (rule-based guardrails stay on).
     guard_model = env("MOODY_GUARD_MODEL")
-    guard = GuardModel(env("MOODY_GUARD_URL", llm_url), guard_model) if guard_model else None
+    guard_url = env("MOODY_GUARD_URL", llm_url if backend == "ollama" else "")
+    guard = None
+    if guard_model and guard_url:
+        guard = GuardModel(guard_url, guard_model)
+    elif guard_model:
+        log.warning("MOODY_GUARD_MODEL set but no Ollama endpoint in MOODY_GUARD_URL: guard model disabled")
 
     settings = AgentSettings(
         locale=env("MOODY_LOCALE", "it"),
@@ -80,14 +93,27 @@ def main() -> None:
             ssl_context=ca_only,
         )
 
+    async def index_knowledge() -> None:
+        """Index in the background, retrying while the AI runtime is still loading its models."""
+        folder = Path(env("MOODY_KNOWLEDGE_DIR", "/knowledge"))
+        delay = 5.0
+        while True:
+            try:
+                added = await agent.kb.index_dir(folder)  # type: ignore[union-attr]
+                log.info("knowledge indexed", extra={"fields": {"new_chunks": added}})
+                return
+            except Exception as exc:  # noqa: BLE001
+                log.warning("knowledge indexing failed (retry in %ds): %s", int(delay), type(exc).__name__)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 300)
+
+    background: set[asyncio.Task] = set()
+
     async def startup() -> None:
         if agent.kb is not None:
-            folder = Path(env("MOODY_KNOWLEDGE_DIR", "/knowledge"))
-            try:
-                added = await agent.kb.index_dir(folder)
-                log.info("knowledge indexed", extra={"fields": {"new_chunks": added}})
-            except Exception as exc:  # noqa: BLE001
-                log.warning("knowledge indexing failed: %s", type(exc).__name__)
+            task = asyncio.create_task(index_knowledge())
+            background.add(task)
+            task.add_done_callback(background.discard)
         await agent.tools.refresh(force=True)
 
     config = uvicorn.Config(

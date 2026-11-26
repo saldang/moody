@@ -48,12 +48,14 @@ static void go(state_t st, const char *detail)
     ui_set_state(map[st], detail);
 }
 
-static void start_listening(uint32_t no_speech_ms)
+static void start_listening(uint32_t no_speech_ms, bool follow_up)
 {
     if (!link_connected()) {
         return;
     }
-    link_send_json("{\"type\":\"listen_start\"}");
+    // follow_up=true keeps the same conversation (answering Moody's question); otherwise the
+    // gateway starts a fresh one, so nothing from earlier interactions is carried over.
+    link_send_json(follow_up ? "{\"type\":\"listen_start\",\"follow_up\":true}" : "{\"type\":\"listen_start\"}");
     audio_listen(no_speech_ms);
     go(ST_LISTENING, NULL);
 }
@@ -132,12 +134,12 @@ static void event_loop(void)
             break;
         case EV_WAKE:
             if (s_state == ST_IDLE) {
-                start_listening(FIRST_WORD_MS);
+                start_listening(FIRST_WORD_MS, false);
             }
             break;
         case EV_TAP:
             if (s_state == ST_IDLE) {
-                start_listening(FIRST_WORD_MS);
+                start_listening(FIRST_WORD_MS, false);
             } else if (s_state == ST_LISTENING) {
                 audio_stop_listening();
                 link_send_json("{\"type\":\"listen_end\"}");
@@ -163,7 +165,7 @@ static void event_loop(void)
         case EV_PLAYBACK_DONE:
             if (s_follow_up) {
                 s_follow_up = false;
-                start_listening(FOLLOW_UP_MS);
+                start_listening(FOLLOW_UP_MS, true);
             } else if (s_state == ST_SPEAKING) {
                 go(ST_IDLE, NULL);
             }

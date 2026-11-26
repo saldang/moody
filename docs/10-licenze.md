@@ -10,6 +10,10 @@ elenca ogni componente, come viene usato e cosa comporta.
 > Le licenze cambiano: verifica sempre la versione che stai usando, soprattutto prima di distribuire dispositivi
 > o usare Moody in ambito commerciale.
 
+> ℹ️ **In sintesi**: lo stack di default (runtime **QVAC di Tether**) non contiene componenti GPL. L'unica licenza
+> "non OSI" del default è quella della voce **Supertonic 3 (OpenRAIL)**, con restrizioni d'uso da leggere. Piper
+> (GPL‑3.0) compare solo negli overlay opzionali `compose.piper.yaml` e `compose.classic.yaml`.
+
 ---
 
 ## 1. Concetti chiave
@@ -81,12 +85,17 @@ Richiede l'integrazione di TensorFlow Lite Micro (Apache-2.0) nel firmware: non 
 
 | Componente | Ruolo | Licenza | Uso | Implicazioni |
 |------------|-------|---------|-----|--------------|
-| Ollama | runtime LLM (home) | MIT | container, HTTP | permissiva |
-| llama.cpp | motore dentro Ollama / alternativa | MIT | indiretto | permissiva |
+| **QVAC CLI e SDK** (`@qvac/cli`, `@qvac/sdk`, Tether) | runtime AI di default: LLM, embedding, STT, TTS (`qvac serve --openai`) | Apache-2.0 | container `moody/qvac`, API OpenAI-compatibile | permissiva (NOTICE Apache se ridistribuisci l'immagine) |
+| QVAC Fabric (fork di llama.cpp, Tether) | motore di inferenza dentro QVAC | MIT | indiretto | permissiva |
+| Bare (Holepunch) | runtime JavaScript del worker QVAC | Apache-2.0 | dentro il container QVAC | permissiva |
+| Node.js | runtime della CLI QVAC | MIT (più licenze delle dipendenze incluse) | immagine base `node:24-trixie-slim` | permissiva |
+| Pacchetti npm installati dalla CLI QVAC | dipendenze (fastify, zod, …) | in prevalenza MIT/Apache-2.0 | dentro il container | se ridistribuisci l'immagine genera un elenco con un SBOM (`syft`) |
+| Ollama | runtime LLM (stack classico, opzionale) | MIT | container, HTTP | permissiva |
+| llama.cpp | motore dentro Ollama | MIT | indiretto | permissiva |
 | vLLM | runtime LLM (enterprise, opzionale) | Apache-2.0 | container, API OpenAI-compatibile | permissiva |
-| faster-whisper | STT | MIT | dentro `rhasspy/wyoming-whisper` | permissiva |
+| faster-whisper | STT (stack classico, opzionale) | MIT | dentro `rhasspy/wyoming-whisper` | permissiva |
 | wyoming-faster-whisper | server Wyoming STT | MIT | container | permissiva |
-| **Piper** (OHF-Voice `piper1-gpl`) | TTS | **GPL-3.0** | dentro `rhasspy/wyoming-piper` 2.x, container separato via protocollo Wyoming | **nessun collegamento** con il nostro codice → aggregazione; il repo resta MIT. Se ridistribuisci l'immagine, rispetta la GPL (sorgente disponibile upstream) |
+| **Piper** (OHF-Voice `piper1-gpl`) | TTS (solo overlay opzionali `compose.piper.yaml`, `compose.classic.yaml`) | **GPL-3.0** | dentro `rhasspy/wyoming-piper` 2.x, container separato via protocollo Wyoming | **nessun collegamento** con il nostro codice → aggregazione; il repo resta MIT. Se ridistribuisci l'immagine, rispetta la GPL (sorgente disponibile upstream) |
 | espeak-ng | fonemizzazione per Piper | GPL-3.0 | dentro il container Piper | come sopra |
 | wyoming-piper | server Wyoming TTS | MIT | container | permissiva |
 | ntfy | notifiche di aiuto | Apache-2.0 / GPL-2.0 (doppia) | container, HTTP | scegli Apache-2.0 |
@@ -103,14 +112,23 @@ Richiede l'integrazione di TensorFlow Lite Micro (Apache-2.0) nel firmware: non 
 
 | Modello | Ruolo | Licenza | Uso commerciale |
 |---------|-------|---------|-----------------|
-| **Qwen3** (`qwen3:8b`, `qwen3:4b`) | LLM di default | Apache-2.0 | sì |
-| **bge-m3** | embedding RAG | MIT | sì |
+| **Qwen3** (`QWEN3_4B_INST_Q4_K_M` in QVAC, default; Qwen3‑8B o `qwen3:8b` in Ollama) | LLM di default | Apache-2.0 | sì |
+| **bge-m3** (GGUF Q8_0 di `ggml-org`) | embedding RAG | MIT | sì |
+| **TranscribePsy 250M** (Tether, `PARAKEET_TRANSCRIBEPSY_250M_Q8_0`) | STT di default | Apache-2.0 (il file `ATTRIBUTIONS.md` del modello indica la derivazione da NVIDIA Parakeet: conservane le attribuzioni) | sì |
+| **Supertonic 3** (Supertone, `TTS_MULTILINGUAL_SUPERTONIC3_Q8_0`) | TTS di default | **OpenRAIL** (licenza "responsible AI": uso commerciale consentito ma con **restrizioni d'uso** vincolanti, che devi trasmettere a chi riceve il modello; non è una licenza OSI) | sì, nel rispetto delle restrizioni: leggi il file `LICENSE` del modello |
+| **BotPsy‑0.8B** (Tether) | LLM leggero opzionale | Apache-2.0 | sì |
+| Laya multilingual 322M (`LAYA_MULTILINGUAL_322M_Q8_0`) | embedding alternativo (non testato) | Apache-2.0 | sì |
 | **IBM Granite Guardian** (`granite3-guardian`) | classificatore di sicurezza opzionale | Apache-2.0 | sì |
-| Whisper (pesi OpenAI, conversioni faster-whisper) | STT | MIT | sì |
+| Whisper (pesi OpenAI, conversioni faster-whisper o `WHISPER_*` in QVAC) | STT alternativo | MIT | sì |
 | **Voci Piper** (es. `it_IT-paola-medium`) | TTS | **variabile per voce** | verifica il `MODEL_CARD` della voce: alcuni dataset sono non commerciali o richiedono attribuzione |
 
-> ⚠️ **Attenzione**: prima di un uso in struttura apri il `MODEL_CARD` della voce scelta (`PIPER_VOICE`) e annota
-> licenza e attribuzione richiesta. Cambia voce se la licenza del dataset non consente il tuo caso d'uso.
+> ⚠️ **Attenzione**: prima di un uso in struttura leggi la licenza della voce. Per **Supertonic 3** (default)
+> fai verificare le restrizioni d'uso OpenRAIL all'ufficio legale; se ti serve uno stack con sole licenze OSI usa
+> la voce Piper (`compose.piper.yaml`). Per **Piper** apri il `MODEL_CARD` della voce scelta (`PIPER_VOICE`) e annota
+> licenza e attribuzione richiesta: alcuni dataset non consentono ogni caso d'uso.
+>
+> I modelli forniti dal registry QVAC con nomi in maiuscolo (es. `QWEN3_4B_INST_Q4_K_M`) mantengono la licenza del
+> modello originale: QVAC li distribuisce, non li ri-licenzia.
 
 ### 2.5 Componenti evitati o segnalati
 
@@ -137,9 +155,11 @@ Distribuire il binario del firmware attiva gli obblighi delle licenze permissive
    da allegare alla documentazione è sufficiente.
 3. **Dove renderle disponibili**: nel manuale consegnato con il dispositivo, su una pagina web della struttura o
    tramite un QR code sulla scheda in camera.
-4. **Server e container**: se fornisci il server già installato, includi anche le licenze delle immagini usate
-   (Piper GPL-3.0 e espeak-ng GPL-3.0 richiedono che il sorgente corrispondente sia disponibile: indica dove
-   ottenerlo, ad esempio i repository upstream alla versione usata).
+4. **Server e container**: se fornisci il server già installato, includi anche le licenze delle immagini usate:
+   NOTICE Apache-2.0 di QVAC, licenze dei pacchetti npm e di Node.js (generale con un SBOM), licenze dei modelli
+   (Supertonic 3 OpenRAIL: le restrizioni d'uso vanno trasmesse; TranscribePsy: attribuzioni NVIDIA). Se usi gli
+   overlay con Piper, Piper GPL-3.0 e espeak-ng GPL-3.0 richiedono che il sorgente corrispondente sia
+   disponibile: indica dove ottenerlo, ad esempio i repository upstream alla versione usata.
 5. **Marchi**: "Moody" è il nome del progetto; non usare marchi di terzi (Espressif, Home Assistant…) in modo che
    suggerisca un'approvazione ufficiale.
 

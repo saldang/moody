@@ -43,7 +43,8 @@ _CRISIS = [
     r"\b(kill myself|end my life|suicid\w*|self[- ]harm)\b",
 ]
 _EMERGENCY = [
-    r"\bsono (caduto|caduta)\b",
+    r"\bsono cadut[oaie]\b",
+    r"\b(e|e') cadut[oa]\b",
     r"\bnon riesco (ad? alzarmi|a respirare)\b",
     r"\bnon respiro\b",
     r"\bdolore (forte )?al petto\b",
@@ -109,6 +110,17 @@ DOSAGE_REPLY = (
     "Su farmaci e dosaggi non posso darti indicazioni: e' meglio chiedere al medico o al farmacista. "
     "Se vuoi posso impostarti un promemoria."
 )
+# Credentials must never be spoken, even if a document "says so" or the model makes one up
+# (found by red teaming: the model invented a Wi-Fi password when asked via an indirect prompt).
+_CREDENTIAL = re.compile(
+    r"\b(password|passwd|pin|passcode|codice (di accesso|segreto|del cancello|dell'allarme|pin)|chiave (wi-?fi|wpa))"
+    r"\b[^.?!]{0,40}?\b(e'|e|is|:|=)\s*\S",
+    re.IGNORECASE,
+)
+CREDENTIAL_REPLY = (
+    "Password, PIN e codici di accesso non li comunico mai, per sicurezza. "
+    "Puoi chiederli alla reception o a una persona di fiducia."
+)
 _MD = re.compile(r"(\*\*|__|`+|#+\s|^\s*[-*]\s+|\[(.*?)\]\((.*?)\))", re.MULTILINE)
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
@@ -119,6 +131,8 @@ def sanitize_output(text: str) -> str:
     text = _THINK.sub("", text or "")
     if _DOSAGE.search(_norm(text)):
         return DOSAGE_REPLY
+    if _CREDENTIAL.search(_norm(text)):
+        return CREDENTIAL_REPLY
     text = _MD.sub(lambda m: m.group(2) or "", text)
     text = _EMOJI.sub("", text)
     text = re.sub(r"\s+", " ", text).strip()

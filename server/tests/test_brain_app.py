@@ -37,3 +37,21 @@ def test_env_empty_means_default(monkeypatch):
     assert env("MOODY_X", "fallback") == "fallback"
     monkeypatch.setenv("MOODY_X", "set")
     assert env("MOODY_X", "fallback") == "set"
+
+
+def test_guard_model_needs_ollama_endpoint(monkeypatch, pki_dir, tmp_path):
+    from moody.brain.__main__ import build_agent
+    svc = pki_dir / "services" / "gateway"
+    for k, v in {"MOODY_TLS_CERT": svc / "tls.pem", "MOODY_TLS_KEY": svc / "tls.key",
+                 "MOODY_TLS_CA": pki_dir / "service-ca" / "ca.pem", "MOODY_DATA_DIR": tmp_path,
+                 "MOODY_TOOL_POLICY": "../deploy/config/tool-policy.yaml",
+                 "MOODY_GUARD_MODEL": "granite3-guardian:2b"}.items():
+        monkeypatch.setenv(k, str(v))
+    monkeypatch.delenv("MOODY_GUARD_URL", raising=False)
+    monkeypatch.setenv("MOODY_LLM_BACKEND", "openai")      # QVAC: no Ollama API -> disabled
+    assert build_agent().guard is None
+    monkeypatch.setenv("MOODY_GUARD_URL", "http://ollama:11434")
+    assert build_agent().guard is not None
+    monkeypatch.delenv("MOODY_GUARD_URL")
+    monkeypatch.setenv("MOODY_LLM_BACKEND", "ollama")      # classic stack: same Ollama endpoint
+    assert build_agent().guard is not None

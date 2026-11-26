@@ -19,7 +19,7 @@ aggiornamenti).
 | T2 | **Vicino sulla Wi‑Fi** o qualcuno che conosce la password Wi‑Fi | Spoofing, Tampering | Connessione al gateway, intercettazione del traffico | mTLS obbligatorio (senza certificato firmato dalla *device CA* il TLS fallisce); TLS 1.2+ con sole suite ECDHE+AEAD verso i dispositivi, TLS 1.3 tra servizi |
 | T3 | **Dispositivo IoT compromesso sulla LAN** (TV, telecamera cinese, presa smart) | Elevation of privilege, Information disclosure | Scansione e attacco al server Moody | VLAN/SSID IoT separato; gateway unico servizio esposto; reti Docker `internal`; firewall host |
 | T4 | **Contenuto malevolo / prompt injection** (frase detta, documento nella knowledge base, output di un tool) | Tampering, Elevation of privilege | Il modello esegue azioni non volute (aprire porte, cancellare dati) | Guardrail deterministici prima dell'LLM; policy dei tool *deny by default* con pattern di blocco duro; livello *confirm*; documenti e output tool marcati come dati non fidati |
-| T5 | **Fuga di dati verso il cloud** | Information disclosure | Conversazioni o umore inviati a terzi | Nessun servizio cloud: STT, LLM, TTS, RAG tutti locali; runtime senza Internet (reti `internal`); nessuna telemetria nel codice Moody |
+| T5 | **Fuga di dati verso il cloud** | Information disclosure | Conversazioni o umore inviati a terzi | Nessun servizio cloud: STT, LLM, TTS, RAG tutti locali in QVAC; runtime senza Internet (reti `internal`); nessuna telemetria nel codice Moody né documentata in QVAC; il registry P2P di QVAC si contatta solo durante il bootstrap |
 | T6 | **Backup persi o rubati** | Information disclosure | Esposizione di chiavi CA, diario dell'umore | Diario cifrato (Fernet) e pseudonimizzato (HMAC); chiave dati separata dal DB; chiavi CA offline e cifrate con passphrase |
 | T7 | **Familiari curiosi** che chiedono a Moody cosa ha detto un'altra persona | Information disclosure | Violazione della privacy domestica | Nessuna memoria a lungo termine delle conversazioni (sessione in RAM ≤ 10 minuti); niente trascrizioni nei log; il riepilogo umore richiede il dispositivo della persona |
 | T8 | **Ascolto ambientale** (il timore "mi ascolta sempre") | Information disclosure | Registrazione di conversazioni private | Wake word "Hi ESP" **sul dispositivo**: prima del wake word (o del tocco sullo schermo) nessun audio lascia il device; il gateway scarta l'audio fuori da `listen_start`/`listen_end`; tasto mute hardware; nessuna fotocamera |
@@ -90,12 +90,26 @@ Inoltre:
 | Rete | Membri | Internet |
 |------|--------|----------|
 | `lan` | gateway (porta 8443), ntfy (8088) | sì (è la rete bridge) |
-| `core` | gateway, brain, whisper, piper | **no** (`internal: true`) |
-| `ai` | brain, ollama | **no** |
+| `core` | gateway, brain, qvac (trascrizione e voce) | **no** (`internal: true`) |
+| `ai` | brain, qvac (LLM ed embedding) | **no** |
 | `tools` | brain, wellbeing, ntfy | **no** |
 
-I modelli si scaricano **una volta** con `scripts/bootstrap-models.sh` (che aggiunge temporaneamente la
-rete `egress` da `compose.bootstrap.yaml`) e poi i container vengono ricreati senza accesso a Internet.
+Con `compose.classic.yaml` al posto di `qvac` ci sono `whisper` e `piper` su `core` e `ollama` su `ai`.
+
+I modelli si scaricano **una volta** con `scripts/bootstrap-models.sh` (che aggiunge temporaneamente una
+rete `egress` ai soli container dei modelli) e poi i container vengono ricreati senza accesso a Internet.
+Il registry di QVAC è peer-to-peer (Hyperswarm): durante il bootstrap l'IP del server è visibile agli
+altri peer. Se non lo vuoi, usa la config solo HTTPS (`QVAC_CONFIG=qvac.https.config.json`, vedi
+[13-qvac.md](13-qvac.md)).
+
+Il container `qvac` (runtime AI di Tether) è indurito come i servizi Moody:
+
+- ascolta solo sulle reti interne e richiede una **chiave Bearer** (`deploy/secrets/qvac_api_key`,
+  letta da file, mai sulla riga di comando);
+- accetta solo l'header `Host: qvac` (`--allowed-host`), contro il DNS rebinding;
+- espone solo l'API OpenAI-compatibile (`--no-default`: niente superficie nativa QVAC né route admin);
+- la **cache KV**, costruita dalle conversazioni e che QVAC normalmente tiene su disco fino a 24 ore,
+  è montata su **tmpfs**: vive solo in RAM e sparisce al riavvio.
 
 Ogni servizio Moody gira con: utente non-root (`MOODY_UID`), filesystem `read_only`, `cap_drop: ALL`,
 `no-new-privileges`, limiti di memoria e PID. I segreti sono **file** (`deploy/secrets/`, permessi 600)
@@ -214,9 +228,9 @@ Dettagli di installazione in [03-setup-ambiente.md](03-setup-ambiente.md).
 | Componente | Come | Frequenza consigliata |
 |------------|------|-----------------------|
 | Sistema operativo | `unattended-upgrades` | automatico (sicurezza) |
-| Immagini container | aggiorna le versioni *pinnate* in `deploy/.env` (`OLLAMA_VERSION`, `WHISPER_VERSION`, …), leggi i changelog, poi `docker compose pull && docker compose up -d` | mensile, o subito per CVE critiche |
+| Immagini container | aggiorna le versioni *pinnate* in `deploy/.env` (`QVAC_CLI_VERSION`, `NTFY_VERSION`, …), leggi i changelog, poi `docker compose build qvac && docker compose pull && docker compose up -d` | mensile, o subito per CVE critiche |
 | Codice Moody | `git pull`, `docker compose build`, ripeti i test e il red teaming ([11-red-teaming.md](11-red-teaming.md)) | a ogni release |
-| Modelli AI | `ollama pull` tramite `scripts/bootstrap-models.sh` (unico momento con Internet) | quando cambi modello: ripeti il red teaming |
+| Modelli AI | modifica `deploy/config/qvac/*.json` e rilancia `scripts/bootstrap-models.sh` (unico momento con Internet); QVAC verifica lo SHA‑256 dei file | quando cambi modello: ripeti il red teaming |
 | Firmware | build firmata con la chiave di Secure Boot, flash/OTA | a ogni release del firmware |
 
 > ⚠️ **Attenzione**: le versioni delle immagini sono fissate di proposito. Non usare `latest`: un
@@ -269,6 +283,7 @@ quando devi provisionare un nuovo dispositivo.
 - [ ] Nessun port forwarding verso Moody; accesso remoto solo via VPN
 - [ ] Disco del server cifrato, SSH solo con chiavi, aggiornamenti automatici
 - [ ] `MOODY_LOG_TRANSCRIPTS=false`
+- [ ] `deploy/secrets/qvac_api_key` presente (permessi 600) e `qvac` raggiungibile solo dalle reti interne
 - [ ] `tool-policy.yaml` rivista: solo i tool necessari, nessuna serratura/allarme/telecamera
 - [ ] In Home Assistant esposte ad Assist solo le entità desiderate
 - [ ] Backup cifrati, chiave dati conservata separatamente

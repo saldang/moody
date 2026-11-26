@@ -1,0 +1,24 @@
+{
+  "cacheDirectory": "/models",
+  "serve": {
+    "load": { "lazy": false, "concurrency": 1, "timeoutMs": 3600000 },
+    "models": {
+      "moody-llm": {
+        "src": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+        "type": "llm",
+        "preload": true,
+        "config": { "ctx_size": 8192, "tools": true, "reasoning_budget": 0 }
+      },
+      "moody-embed": {
+        "src": "https://huggingface.co/ggml-org/bge-m3-Q8_0-GGUF/resolve/main/bge-m3-q8_0.gguf",
+        "type": "embeddings",
+        "preload": true
+      },
+      "moody-stt": {
+        "src": "https://huggingface.co/qvac/TranscribePsy-250M-EU-sub-gguf/resolve/92460e0a8e7dc20f2fb126198bdd9eebb9ba2dc7/transcribepsy-250m-eu-sub.gguf",
+        "type": "parakeet",
+        "preload": true
+      }
+    }
+  }
+}

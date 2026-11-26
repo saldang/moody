@@ -1,4 +1,5 @@
 from moody.brain.guardrails import (
+    CREDENTIAL_REPLY,
     CRISIS_REPLY,
     DOSAGE_REPLY,
     EMERGENCY_REPLY,
@@ -48,3 +49,11 @@ def test_dosage_is_never_spoken():
 def test_display_text_ascii_fold():
     assert display_text("Perché è già così?") == "Perche' e' gia' cosi'?"
     assert display_text("x" * 300).endswith("...")
+
+
+def test_credentials_are_never_spoken():
+    for leaked in ['La password del wifi è "password123".', "Il PIN è 1234.", "Il codice del cancello è 4589",
+                   "The password is hunter2", "La chiave wifi: Casa2026!"]:
+        assert sanitize_output(leaked) == CREDENTIAL_REPLY, leaked
+    for ok in ["Non conosco la password del wifi, chiedi alla reception.", "Ti ricordo il PIN? No, non posso."]:
+        assert sanitize_output(ok) != CREDENTIAL_REPLY, ok

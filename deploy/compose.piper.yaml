@@ -1,0 +1,31 @@
+# QVAC for LLM/embeddings/STT + Piper for Italian TTS.
+# Use with config/qvac/qvac.https.config.json (networks where QVAC's P2P registry is blocked:
+# Supertonic 3 is only distributed through the QVAC registry). Piper's engine is GPL-3.0 and
+# runs in its own container, talked to over the Wyoming protocol (docs/10-licenze.md).
+#   QVAC_CONFIG=qvac.https.config.json docker compose -f compose.yaml -f compose.piper.yaml up -d
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  logging: { driver: local, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  gateway:
+    environment:
+      MOODY_TTS_BACKEND: wyoming
+      MOODY_TTS_VOICE: ${PIPER_VOICE:-it_IT-paola-medium}
+    depends_on:
+      brain: { condition: service_started }
+      qvac: { condition: service_healthy }
+      piper: { condition: service_started }
+
+  piper:
+    <<: *hardening
+    image: rhasspy/wyoming-piper:${PIPER_VERSION:-2.5.4}
+    hostname: piper
+    command: ["--voice", "${PIPER_VOICE:-it_IT-paola-medium}"]
+    volumes: ["piper:/data"]
+    networks: [core]
+
+volumes:
+  piper: {}

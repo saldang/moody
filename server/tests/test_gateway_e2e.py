@@ -28,9 +28,11 @@ class FakeTTS:
 class FakeBrain:
     def __init__(self):
         self.turns = []
+        self.sessions = []
 
     async def turn(self, subject, session_id, text):
         self.turns.append((subject, text))
+        self.sessions.append(session_id)
         return {"reply": "Oggi alle dieci c'è ginnastica dolce. Vuoi un promemoria?", "category": "chat"}
 
     async def notifications(self, subject):
@@ -96,6 +98,7 @@ async def test_full_voice_turn(pki_dir, device_cert, gateway_factory):
             assert seen == ["state", "stt", "reply", "tts_start", "tts_end"]
             assert audio == 16000
         assert brain.turns == [("res-001", "che attività ci sono oggi?")]
+        assert len(brain.sessions) == 1
     finally:
         server.close()
 
@@ -161,5 +164,33 @@ async def test_ota_offer_and_download(pki_dir, device_cert, gateway_factory, tmp
         async with httpx.AsyncClient(verify=ctx) as client:
             r = await client.get(f"https://localhost:{port}/v1/firmware/moody_edge.bin")
         assert r.status_code == 200 and len(r.content) == 1024
+    finally:
+        server.close()
+
+
+async def test_new_interaction_new_session_follow_up_same(pki_dir, device_cert, gateway_factory):
+    cert, key, _ = device_cert("moody-test01")
+    server, port, brain = await gateway_factory("devices:\n  moody-test01: {}\n")
+
+    async def utterance(ws, follow_up=False):
+        await ws.send(json.dumps({"type": "listen_start", **({"follow_up": True} if follow_up else {})}))
+        pcm = tone(1.0)
+        for i in range(0, len(pcm), 2048):
+            await ws.send(pcm[i:i + 2048])
+        await ws.send(json.dumps({"type": "listen_end"}))
+        while True:
+            f = await asyncio.wait_for(ws.recv(), 5)
+            if not isinstance(f, bytes) and json.loads(f)["type"] == "tts_end":
+                return
+
+    try:
+        async with connect(f"wss://localhost:{port}/v1/ws", ssl=client_ctx(pki_dir, cert, key),
+                           subprotocols=["moody.v1"], max_size=None) as ws:
+            await ws.send(json.dumps({"type": "hello"}))
+            await ws.recv()
+            await utterance(ws)                  # wake word
+            await utterance(ws, follow_up=True)  # answering Moody's question
+            await utterance(ws)                  # later, new wake word
+        assert brain.sessions[0] == brain.sessions[1] != brain.sessions[2]
     finally:
         server.close()

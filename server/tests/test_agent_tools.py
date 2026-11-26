@@ -132,7 +132,7 @@ async def test_rag_index_and_search(tmp_path):
     kb = KnowledgeBase(tmp_path / "kb.sqlite3", HashEmbedder())
     assert await kb.index_dir(kb_dir) >= 1
     assert await kb.index_dir(kb_dir) == 0  # unchanged files are not re-embedded
-    hits = await kb.search("quando c'e ginnastica dolce martedi", min_score=0.1)
+    hits = await kb.search("quando c'e ginnastica dolce martedi", min_score=0.1, margin=1.0)
     assert hits and "Ginnastica" in hits[0].text
     assert format_passages(hits).startswith("<documenti>")
 
@@ -146,3 +146,47 @@ def test_chunking_respects_limit():
 def test_strip_injected_handles_empty(schema):
     params, injected = _strip_injected(schema)
     assert injected == ()
+
+
+def test_root_cause_unwraps_exception_groups():
+    from moody.brain.tools import _root_cause
+    try:
+        try:
+            raise OSError("Name or service not known")
+        except OSError as inner:
+            raise RuntimeError("connect failed") from inner
+    except RuntimeError as outer:
+        group = ExceptionGroup("unhandled errors in a TaskGroup", [outer])
+    assert _root_cause(group) == "OSError: Name or service not known"
+
+
+async def test_retry_when_model_describes_tool_instead_of_calling_it():
+    agent, llm, provider = await make_agent([
+        ChatResult('Usa il comando "wellbeingmood_checkin" con un punteggio di 4.'),
+        ChatResult("", [ToolCall("wellbeing__mood_checkin", {"score": 4})]),
+        ChatResult("Grazie, l'ho annotato."),
+    ])
+    out = await agent.turn("res-001", "s1", "direi un quattro")
+    assert provider.calls == [("mood_checkin", {"score": 4, "subject": "res-001"})]
+    assert "annotato" in out.reply
+
+
+async def test_dynamic_context_goes_in_user_turn_not_system():
+    agent, llm, _ = await make_agent([ChatResult("Ciao!")])
+    await agent.turn("res-001", "s1", "ciao")
+    system = [m for m in llm.seen_messages if m["role"] == "system"]
+    assert len(system) == 1 and "oggi e'" not in system[0]["content"]  # static, cacheable prefix
+    last = llm.seen_messages[-1]["content"]
+    assert last.startswith("<contesto>") and last.endswith("</contesto>\n\nciao")
+
+
+async def test_changing_embedding_model_forces_reindex(tmp_path):
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    (kb_dir / "a.md").write_text("# Coro\nGiovedi alle 17.")
+    first = HashEmbedder()
+    first.model = "model-a"
+    assert await KnowledgeBase(tmp_path / "kb.db", first).index_dir(kb_dir) == 1
+    second = HashEmbedder()
+    second.model = "model-b"
+    assert await KnowledgeBase(tmp_path / "kb.db", second).index_dir(kb_dir) == 1

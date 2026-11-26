@@ -20,10 +20,15 @@ cd deploy
 docker compose up -d                                              # casa
 docker compose -f compose.yaml -f compose.gpu.yaml up -d          # casa con GPU NVIDIA
 docker compose -f compose.yaml -f compose.enterprise.yaml up -d   # struttura (Keycloak/OIDC)
+# varianti del runtime AI (vedi 03 e 13-qvac.md):
+QVAC_CONFIG=qvac.https.config.json docker compose -f compose.yaml -f compose.piper.yaml up -d  # QVAC via HTTPS + voce Piper
+docker compose -f compose.yaml -f compose.classic.yaml up -d && docker compose stop qvac       # Ollama + faster-whisper + Piper
 ```
 
 Al primo avvio Docker costruisce l'immagine `moody/server` da `../server`: unica immagine, con tre
-entrypoint (`moody-gateway`, `moody-brain`, `moody-wellbeing`). Gli override si combinano, ad
+entrypoint (`moody-gateway`, `moody-brain`, `moody-wellbeing`), e l'immagine `moody/qvac` da
+`qvac/` (Node.js + `@qvac/cli`, ~5,3 GB). `brain` e `gateway` partono solo quando `qvac` è
+`healthy`, cioè quando tutti i modelli sono caricati. Gli override si combinano, ad
 esempio `-f compose.yaml -f compose.gpu.yaml -f compose.enterprise.yaml`.
 
 > 💡 **Suggerimento:** per non ripetere i `-f` crea un alias, ad esempio
@@ -38,8 +43,10 @@ esempio `-f compose.yaml -f compose.gpu.yaml -f compose.enterprise.yaml`.
 docker compose ps
 ```
 
-Devono risultare `running`: `gateway`, `brain`, `wellbeing`, `ollama`, `whisper`, `piper`, `ntfy`
-(più `keycloak` e `keycloak-db` in enterprise).
+Devono risultare `running`: `gateway`, `brain`, `wellbeing`, `qvac` (con stato `healthy`), `ntfy`
+(più `piper` con `compose.piper.yaml`; `ollama`, `whisper`, `piper` con `compose.classic.yaml`;
+`keycloak` e `keycloak-db` in enterprise). Per vedere i modelli caricati da QVAC:
+`docker compose logs qvac | grep loaded`.
 
 ### 2.2 Log (JSON, con redazione dei dati personali)
 
@@ -95,11 +102,18 @@ viene comunque rifiutata: è il comportamento corretto.
    momento l'audio viene inviato al gateway.
 4. Parla normalmente. Il dispositivo chiude l'ascolto quando rileva la fine della frase (al massimo
    15 secondi per frase).
-5. Stato **sto pensando**: il gateway trascrive (Whisper) e passa il testo al brain. Sul display
-   compare ciò che è stato capito.
-6. Stato **sto parlando**: la risposta viene letta da Piper e mostrata sul display.
+5. Stato **sto pensando**: il gateway fa trascrivere l'audio a QVAC (TranscribePsy) e passa il testo
+   al brain. Sul display compare ciò che è stato capito.
+6. Stato **sto parlando**: la risposta viene letta con la voce Supertonic 3 di QVAC (o Piper nelle
+   varianti) e mostrata sul display.
 7. Se la risposta è una **domanda** (ad esempio una conferma), il dispositivo riapre l'ascolto per
-   circa **6 secondi** senza bisogno della wake word, poi torna a riposo.
+   circa **6 secondi** senza bisogno della wake word, poi torna a riposo. Una nuova wake word apre
+   una conversazione nuova: Moody non ricorda le richieste precedenti.
+
+> ℹ️ **Quanto aspettare:** su CPU la risposta richiede diversi secondi, di più quando Moody usa uno
+> strumento (promemoria, diario). Nei test di questo progetto su una macchina con 4 vCPU servivano
+> 25–45 s senza strumenti e 50–75 s con uno strumento; un mini PC a 8 core o una GPU riducono molto i
+> tempi. Le frasi di emergenza rispondono subito (circa mezzo secondo) perché non passano dall'LLM.
 
 Per interrompere Moody mentre parla, tocca lo schermo. Con il **mute hardware** attivo
 (indicatore rosso sul pulsante) nessun suono viene captato.
@@ -129,7 +143,8 @@ Per interrompere Moody mentre parla, tocca lo schermo. Con il **mute hardware** 
 
 1. Modifica o aggiungi file Markdown in `deploy/knowledge/` (calendario attività, orari, regole).
    Solo contenuti generali, **mai dati personali** (vedi `deploy/knowledge/README.md`).
-2. Riavvia il brain: reindicizza solo i file cambiati e rimuove quelli cancellati.
+2. Riavvia il brain: reindicizza solo i file cambiati e rimuove quelli cancellati (tutto, se hai
+   cambiato modello di embedding). Se QVAC non è ancora pronto il brain riprova da solo.
    ```bash
    cd deploy && docker compose restart brain
    docker compose logs brain | grep "knowledge indexed"
@@ -166,8 +181,10 @@ Il gateway **ricarica il file a caldo** a ogni nuova connessione: non serve riav
 
 ## 6. Aggiornamenti
 
-Tutte le immagini sono **fissate a una versione** in `deploy/.env` (`OLLAMA_VERSION`,
-`WHISPER_VERSION`, `PIPER_VERSION`, `NTFY_VERSION`, `KEYCLOAK_VERSION`).
+Tutte le immagini sono **fissate a una versione** in `deploy/.env` (`QVAC_CLI_VERSION`,
+`NTFY_VERSION`, `KEYCLOAK_VERSION` e, per le varianti, `OLLAMA_VERSION`, `WHISPER_VERSION`,
+`PIPER_VERSION`). L'immagine `moody/qvac` è costruita in locale: per aggiornare QVAC cambia
+`QVAC_CLI_VERSION` e ricostruisci (`docker compose build qvac`).
 
 1. Leggi il changelog della nuova versione (sicurezza, cambi di configurazione).
 2. Aggiorna il numero di versione in `deploy/.env`.
@@ -180,8 +197,9 @@ Tutte le immagini sono **fissate a una versione** in `deploy/.env` (`OLLAMA_VERS
 4. Per il codice di Moody: `git pull` nel repository, poi `docker compose build && docker compose up -d`.
 5. Controlla i log e fai una conversazione di prova.
 
-> ℹ️ Le immagini dei modelli girano senza Internet. Un cambio di modello (`MOODY_LLM_MODEL`,
-> `WHISPER_MODEL`, `PIPER_VOICE`) richiede di rilanciare `./scripts/bootstrap-models.sh`.
+> ℹ️ I container dei modelli girano senza Internet. Un cambio di modello (nel file
+> `deploy/config/qvac/*.json`, o `OLLAMA_*`, `WHISPER_MODEL`, `PIPER_VOICE` nello stack classico)
+> richiede di rilanciare `./scripts/bootstrap-models.sh`.
 
 ## 7. Backup
 
@@ -193,6 +211,7 @@ Tutte le immagini sono **fissate a una versione** in `deploy/.env` (`OLLAMA_VERS
 | Diario dell'umore e promemoria (cifrati) | `deploy/data/wellbeing/` | Backup cifrato |
 | Configurazione | `deploy/.env`, `deploy/config/`, `deploy/knowledge/` | Backup cifrato (`.env` contiene password in enterprise) |
 | Indice della knowledge base | `deploy/data/brain/` | Facoltativo: si ricostruisce da solo |
+| Modelli di QVAC | `deploy/data/qvac-models/` | Facoltativo (~4 GB): si riscaricano con `bootstrap-models.sh`; utile tenerne una copia se il registry P2P non è raggiungibile |
 
 Esempio con **restic** (BSD-2-Clause), backup cifrato su un disco o un NAS:
 
@@ -221,12 +240,15 @@ manager): chi ruba il backup del database senza la chiave non può leggerlo.
 | Errore TLS sul dispositivo | Orologio non sincronizzato (i certificati "non ancora validi"), CA sbagliata nel provisioning, nome o IP non presente nei SAN del certificato del gateway | Controlla che il dispositivo raggiunga un server NTP. Rifai il provisioning con la `service-ca` corretta. Rigenera il certificato del gateway con `moody.pki service gateway --dns ... --ip ...` |
 | `device_rejected` nei log (HTTP 403) | CN non presente in `devices.yaml`, `enabled: false` o seriale revocato | Aggiungi o abilita il dispositivo. Se è revocato serve un nuovo provisioning |
 | `device_duplicate_connection` | Due dispositivi con lo stesso certificato | Indaga: possibile clonazione. Revoca il seriale e rifai il provisioning |
-| Moody risponde "Non ho capito bene" o lo STT è vuoto | Mute hardware attivo, microfono coperto, frase troppo breve o sottovoce, modello Whisper troppo piccolo | Togli il mute, avvicinati, prova `WHISPER_MODEL=small-int8` o `medium-int8` |
-| Risposte molto lente | Modello troppo grande per l'hardware, modello scaricato dalla RAM | Usa `qwen3:4b`. Con GPU usa `compose.gpu.yaml`. Controlla `docker compose logs ollama` |
+| Moody risponde "Non ho capito bene" o lo STT è vuoto | Mute hardware attivo, microfono coperto, frase troppo breve o sottovoce | Togli il mute, avvicinati. Per l'italiano puoi provare `WHISPER_ITALIAN_BASE_Q8_0` come `moody-stt` nella config di QVAC ([13-qvac.md](13-qvac.md)) |
+| Moody non registra l'umore o il promemoria anche se l'hai chiesto | Trascrizione sbagliata (es. "dire in quattro") o modello piccolo che non chiama lo strumento | Ripeti la frase in modo chiaro. Con una GPU usa Qwen3‑8B (`QWEN3_8B_INST_Q4_K_M`) come `moody-llm` |
+| `qvac` non diventa `healthy` | Modelli non scaricati (bootstrap non eseguito o registry P2P bloccato), RAM insufficiente | `docker compose logs qvac`. Rilancia `bootstrap-models.sh`; senza UDP usa `qvac.https.config.json` + `compose.piper.yaml`; alza `QVAC_MEM_LIMIT` |
+| Risposte molto lente | Hardware troppo lento per il modello | Prova BotPsy‑0.8B o Qwen3‑1.7B come `moody-llm`. Con GPU usa `compose.gpu.yaml` (Vulkan, sperimentale) |
+| Log del brain: `guard model unavailable` | `MOODY_GUARD_MODEL` impostato ma nessun endpoint Ollama | Lascia vuoto `MOODY_GUARD_MODEL` oppure configura `MOODY_GUARD_URL` verso un servizio Ollama |
 | "Ho avuto un problema tecnico" | Errore nel brain (LLM o tool non raggiungibile) | `docker compose logs brain`: cerca `turn failed` o `tool provider ... unavailable` |
 | Il contatto non riceve notifiche di aiuto | Token ntfy mancante, topic vuoto, app non iscritta, `MOODY_NTFY_BIND` non raggiungibile dal telefono | Rilancia `./scripts/ntfy-setup.sh`, poi `docker compose restart wellbeing`. Verifica `help_requested` nei log |
 | I promemoria non suonano | Fascia `quiet_hours` attiva, dispositivo disconnesso | Controlla `devices.yaml` e lo stato della connessione |
-| La knowledge base viene ignorata | `MOODY_EMBED_MODEL` vuoto o modello non scaricato | Imposta `bge-m3`, poi `bootstrap-models.sh` e `docker compose restart brain` |
+| La knowledge base viene ignorata | `MOODY_EMBED_MODEL=none`, alias assente nella config di QVAC, soglia troppo alta | Imposta `moody-embed`, verifica `docker compose logs brain \| grep knowledge`, abbassa `MOODY_RAG_MIN_SCORE` |
 | Il container non legge chiavi o certificati (permission denied) | `MOODY_UID`/`MOODY_GID` diversi dal proprietario dei file in `deploy/` | Allinea i valori in `.env` all'utente che ha eseguito `setup.sh` (`id -u`, `id -g`) |
 
 ## 9. Eseguire i test

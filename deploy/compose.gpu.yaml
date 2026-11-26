@@ -1,11 +1,19 @@
-# NVIDIA GPU for Ollama (requires nvidia-container-toolkit on the host).
+# NVIDIA GPU (requires nvidia-container-toolkit on the host).
 #   docker compose -f compose.yaml -f compose.gpu.yaml up -d
+# QVAC uses Vulkan on Linux: the "graphics" capability exposes the NVIDIA Vulkan ICD to the
+# container. Check the logs for the selected backend; it falls back to CPU otherwise.
+# With compose.classic.yaml the same reservation applies to Ollama.
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
 services:
-  ollama:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+  qvac:
+    <<: *gpu
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: graphics,compute,utility

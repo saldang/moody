@@ -1,20 +1,24 @@
-"""Speech-to-text and text-to-speech over the Wyoming protocol (MIT).
+"""Speech-to-text and text-to-speech backends.
 
-STT runs faster-whisper (MIT) and TTS runs Piper in *separate containers*.
-Talking to them over a socket keeps this MIT codebase cleanly separated from
-Piper's GPL-3.0 engine (no linking) - see docs/10-licenze.md.
+* ``OpenAISTT`` / ``OpenAITTS`` - OpenAI-compatible audio API. Default: the QVAC
+  server by Tether (``qvac serve --openai``) with TranscribePsy (STT) and
+  Supertonic 3 (TTS), see docs/13-qvac.md.
+* ``WyomingSTT`` / ``WyomingTTS`` - Wyoming protocol (MIT): faster-whisper and Piper.
+  Piper's engine is GPL-3.0: it runs in a *separate container* and we only talk to
+  it over a socket, which keeps this MIT codebase cleanly separated (docs/10-licenze.md).
 """
 
 from __future__ import annotations
 
 from typing import Protocol
 
+import httpx
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.client import AsyncTcpClient
 from wyoming.tts import Synthesize, SynthesizeVoice
 
-from .audio import to_mono_16k
+from .audio import pcm_to_wav, to_mono_16k, wav_to_pcm
 
 
 class STT(Protocol):
@@ -65,3 +69,42 @@ class WyomingTTS:
                 elif AudioChunk.is_type(event.type):
                     chunks.append(AudioChunk.from_event(event).audio)
         return to_mono_16k(b"".join(chunks), *fmt)
+
+
+class OpenAISTT:
+    """``POST {base}/audio/transcriptions`` (multipart WAV). Language is fixed at model load in QVAC."""
+
+    def __init__(self, base_url: str, model: str, api_key: str = "", timeout: float = 60) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self._http = httpx.AsyncClient(trust_env=False, timeout=timeout, headers=headers)
+
+    async def transcribe(self, pcm: bytes, rate: int = 16000) -> str:
+        resp = await self._http.post(
+            f"{self.base_url}/audio/transcriptions",
+            files={"file": ("utterance.wav", pcm_to_wav(pcm, rate), "audio/wav")},
+            data={"model": self.model, "response_format": "json"},
+        )
+        resp.raise_for_status()
+        return str(resp.json().get("text", "")).strip()
+
+
+class OpenAITTS:
+    """``POST {base}/audio/speech`` returning WAV; converted to PCM s16le mono 16 kHz."""
+
+    def __init__(self, base_url: str, model: str, voice: str, api_key: str = "", timeout: float = 60) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.voice = voice
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self._http = httpx.AsyncClient(trust_env=False, timeout=timeout, headers=headers)
+
+    async def synthesize(self, text: str) -> bytes:
+        resp = await self._http.post(
+            f"{self.base_url}/audio/speech",
+            json={"model": self.model, "input": text, "voice": self.voice, "response_format": "wav"},
+        )
+        resp.raise_for_status()
+        pcm, rate, width, channels = wav_to_pcm(resp.content)
+        return to_mono_16k(pcm, rate, width, channels)
